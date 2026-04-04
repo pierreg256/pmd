@@ -16,6 +16,7 @@ use crate::protocol::MembershipEvent;
 pub struct NodeInfo {
     pub node_id: String,
     pub addr: SocketAddr,
+    #[allow(dead_code)] // used when discovery plugins inspect metadata
     pub metadata: HashMap<String, String>,
     pub joined_at: u64,
 }
@@ -67,6 +68,7 @@ impl Membership {
     }
 
     /// Remove a node from the CRDT.
+    #[allow(dead_code)] // used by graceful shutdown in Phase 5
     pub fn remove_node(&mut self, node_id: &str) {
         let path = format!("/nodes/{node_id}");
         self.doc.remove(&path);

@@ -138,10 +138,22 @@ pmd/
 14. **Graceful shutdown** — Sur SIGTERM/SIGINT : notifier les peers du départ, fermer les connexions TLS, supprimer le PID file
 15. **Reconnexion automatique** — Si un peer connu se déconnecte, tenter de se reconnecter avec backoff exponentiel
 16. **Logging structuré** — `tracing` avec subscriber journald (daemon) ou stdout (foreground)
-17. **Tests** — 
-    - Tests unitaires : protocol serialization/deserialization, membership CRDT merge
-    - Tests d'intégration : 2-3 instances PMD en localhost, vérifier convergence
-    - Test du plugin broadcast avec loopback
+17. **Tests** — Tests are a hard gate: **nothing is pushed until all tests pass**.
+    - `cargo test --workspace && cargo clippy --workspace -- -D warnings` must pass before every push
+    - **Unit tests** (in each module):
+      - Protocol: roundtrip serde for every `Message` variant, frame encode/decode, oversized frame rejection, HMAC valid/invalid/empty
+      - Membership: add/remove node, merge convergence (2 replicas, 3+ replicas), join/leave detection, delta encoding, idempotent merge
+      - Config: default values, directory creation
+      - TLS: cert generation, acceptor/connector construction
+      - Control: each request/response variant, malformed JSON handling
+    - **Integration tests** (`crates/pmd/tests/`):
+      - Two PMD instances connect over TLS, handshake with valid cookie, exchange membership, verify convergence
+      - Handshake with invalid cookie → rejected
+      - Heartbeat keeps connection alive, timeout detects dead peer
+      - Graceful shutdown notifies peers
+      - Broadcast plugin discovers peers on loopback
+    - Always use `127.0.0.1:0` for random ports, `tokio::time::timeout(10s)` to prevent hangs
+    - Every bug fix must include a regression test
 
 ## Dépendances clés (Cargo.toml)
 
@@ -162,13 +174,20 @@ pmd/
 
 ## Verification
 
-1. `cargo build --workspace` compile sans erreur
-2. `cargo test --workspace` — tests unitaires protocol, membership merge, config parsing
-3. Test manuel : `pmd start --foreground` → `pmd status` → vérifier réponse JSON
-4. Test 2 instances : `pmd start --port 4369` puis `pmd start --port 4370`, `pmd join 127.0.0.1:4369` depuis la 2e → vérifier que `pmd nodes` montre les 2 nœuds des deux côtés
-5. Test broadcast : activer le plugin broadcast sur 2 instances → vérifier découverte automatique
-6. Test TLS : vérifier avec `openssl s_client` que le port PMD parle bien TLS
-7. Test graceful shutdown : `pmd stop` → vérifier que l'autre instance détecte le départ
+**Hard gate: nothing is pushed to GitHub unless ALL of the following pass:**
+
+```sh
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+```
+
+Additional manual verification:
+1. `pmd start --foreground` → `pmd status` → vérifier réponse JSON
+2. Test 2 instances : `pmd start --port 4369` puis `pmd start --port 4370`, `pmd join 127.0.0.1:4369` depuis la 2e → vérifier que `pmd nodes` montre les 2 nœuds des deux côtés
+3. Test broadcast : activer le plugin broadcast sur 2 instances → vérifier découverte automatique
+4. Test TLS : vérifier avec `openssl s_client` que le port PMD parle bien TLS
+5. Test graceful shutdown : `pmd stop` → vérifier que l'autre instance détecte le départ
 
 ## Decisions
 

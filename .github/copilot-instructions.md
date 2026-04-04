@@ -33,6 +33,21 @@ cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
 
+**Nothing gets pushed to GitHub without passing all three commands above.** This is a hard gate — no exceptions.
+
+## Testing Policy
+
+- **Every new function or module must have tests** — unit tests at minimum, integration tests for anything involving I/O
+- **Unit tests** live in `#[cfg(test)] mod tests { ... }` in the same file
+- **Integration tests** live under `crates/<crate>/tests/` for cross-module or network scenarios
+- **Test before commit**: run `cargo test --workspace && cargo clippy --workspace -- -D warnings` before every commit. If tests fail, fix them — never push broken code
+- **Protocol tests**: every `Message` variant must have a roundtrip serialize/deserialize test
+- **Membership tests**: verify CRDT merge convergence with 2+ replicas, test join/leave detection
+- **TLS tests**: use test CAs, never skip certificate verification
+- **Network tests**: always bind to `127.0.0.1:0` for random ports — never hardcode ports
+- **Cookie tests**: test valid HMAC accepted, invalid HMAC rejected, empty cookie rejected
+- **No `#[ignore]` without a comment** explaining why and a tracking issue
+
 ## Key Dependencies
 
 | Crate | Purpose |
@@ -60,3 +75,4 @@ cargo clippy --workspace -- -D warnings
 - After completing each step or phase from `PLAN.md`, **commit and push** (`git add -A && git commit -m "<message>" && git push`)
 - Commit messages should reference the phase/step number, e.g. `Phase 2, step 7: TLS setup`
 - Never leave uncommitted work at the end of a phase
+- **Before every push**: run `cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings` — all three must pass with zero failures and zero warnings (dead-code warnings for future phases excepted)

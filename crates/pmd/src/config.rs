@@ -25,7 +25,8 @@ pub struct Config {
     pub sync_interval_secs: u64,
     /// Heartbeat interval in seconds.
     pub heartbeat_interval_secs: u64,
-    /// Heartbeat timeout in seconds.
+    /// Heartbeat timeout in seconds (used in Phase 5: reconnection).
+    #[allow(dead_code)]
     pub heartbeat_timeout_secs: u64,
 }
 
