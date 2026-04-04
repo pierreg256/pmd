@@ -90,6 +90,7 @@ impl DiscoveryPlugin for BroadcastPlugin {
 
         let mut buf = vec![0u8; 1024];
         let mut interval = time::interval(self.interval);
+        let mut known_peers = std::collections::HashSet::<String>::new();
 
         info!(port = self.port, "broadcast discovery started");
 
@@ -107,12 +108,14 @@ impl DiscoveryPlugin for BroadcastPlugin {
                         Ok((len, src)) => {
                             match serde_json::from_slice::<Beacon>(&buf[..len]) {
                                 Ok(remote_beacon) => {
-                                    if remote_beacon.node_id != ctx.local_node.node_id {
-                                        debug!(
+                                    if remote_beacon.node_id != ctx.local_node.node_id
+                                        && known_peers.insert(remote_beacon.node_id.clone())
+                                    {
+                                        info!(
                                             node_id = %remote_beacon.node_id,
                                             addr = %remote_beacon.listen_addr,
                                             from = %src,
-                                            "discovered peer via broadcast"
+                                            "discovered new peer via broadcast"
                                         );
                                         let _ = ctx.discovered_tx.send(remote_beacon.listen_addr).await;
                                     }
