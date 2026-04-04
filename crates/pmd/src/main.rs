@@ -80,19 +80,17 @@ async fn main() -> Result<()> {
 
         Commands::Join { addr, port } => {
             let config = Config::new(port, "0.0.0.0".into())?;
-            let resp =
-                send_control_request(&config.socket_path, &ControlRequest::Join { addr })
-                    .await
-                    .context("failed to connect to daemon — is it running?")?;
+            let resp = send_control_request(&config.socket_path, &ControlRequest::Join { addr })
+                .await
+                .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 
         Commands::Leave { addr, port } => {
             let config = Config::new(port, "0.0.0.0".into())?;
-            let resp =
-                send_control_request(&config.socket_path, &ControlRequest::Leave { addr })
-                    .await
-                    .context("failed to connect to daemon — is it running?")?;
+            let resp = send_control_request(&config.socket_path, &ControlRequest::Leave { addr })
+                .await
+                .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 
@@ -125,23 +123,18 @@ async fn main() -> Result<()> {
 
         Commands::Unregister { name, port } => {
             let config = Config::new(port, "0.0.0.0".into())?;
-            let resp = send_control_request(
-                &config.socket_path,
-                &ControlRequest::Unregister { name },
-            )
-            .await
-            .context("failed to connect to daemon — is it running?")?;
+            let resp =
+                send_control_request(&config.socket_path, &ControlRequest::Unregister { name })
+                    .await
+                    .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 
         Commands::Lookup { name, port } => {
             let config = Config::new(port, "0.0.0.0".into())?;
-            let resp = send_control_request(
-                &config.socket_path,
-                &ControlRequest::Lookup { name },
-            )
-            .await
-            .context("failed to connect to daemon — is it running?")?;
+            let resp = send_control_request(&config.socket_path, &ControlRequest::Lookup { name })
+                .await
+                .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 

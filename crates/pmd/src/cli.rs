@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "pmd", about = "Port Mapper Daemon — distributed node membership")]
+#[command(
+    name = "pmd",
+    about = "Port Mapper Daemon — distributed node membership"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

@@ -65,15 +65,27 @@ pub enum MembershipEvent {
 pub enum ControlRequest {
     Status,
     Nodes,
-    Join { addr: String },
-    Leave { addr: String },
+    Join {
+        addr: String,
+    },
+    Leave {
+        addr: String,
+    },
     Shutdown,
     /// Register a named service on this node (Phase 7: port mapping).
-    Register { name: String, port: u16, metadata: std::collections::HashMap<String, String> },
+    Register {
+        name: String,
+        port: u16,
+        metadata: std::collections::HashMap<String, String>,
+    },
     /// Unregister a named service.
-    Unregister { name: String },
+    Unregister {
+        name: String,
+    },
     /// Look up a registered service by name across the cluster.
-    Lookup { name: String },
+    Lookup {
+        name: String,
+    },
     /// Subscribe to membership events (long-lived connection).
     Subscribe,
 }
@@ -82,7 +94,9 @@ pub enum ControlRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControlResponse {
     Ok,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     Status {
         node_id: String,
         listen_addr: String,
@@ -177,16 +191,14 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// Compute HMAC-SHA256 of the nonce using the cookie as key.
 pub fn compute_cookie_hmac(cookie: &[u8], nonce: &[u8; 32]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(cookie)
-        .expect("HMAC accepts any key size");
+    let mut mac = HmacSha256::new_from_slice(cookie).expect("HMAC accepts any key size");
     mac.update(nonce);
     mac.finalize().into_bytes().to_vec()
 }
 
 /// Verify an HMAC-SHA256 cookie challenge.
 pub fn verify_cookie_hmac(cookie: &[u8], nonce: &[u8; 32], expected: &[u8]) -> bool {
-    let mut mac = HmacSha256::new_from_slice(cookie)
-        .expect("HMAC accepts any key size");
+    let mut mac = HmacSha256::new_from_slice(cookie).expect("HMAC accepts any key size");
     mac.update(nonce);
     mac.verify_slice(expected).is_ok()
 }
@@ -216,7 +228,12 @@ mod tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::Handshake { node_id, listen_addr, nonce, cookie_hmac } => {
+            Message::Handshake {
+                node_id,
+                listen_addr,
+                nonce,
+                cookie_hmac,
+            } => {
                 assert_eq!(node_id, "node-1");
                 assert_eq!(listen_addr, "127.0.0.1:4369".parse::<SocketAddr>().unwrap());
                 assert_eq!(nonce, [42u8; 32]);
@@ -237,7 +254,9 @@ mod tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::HandshakeAck { node_id, nonce, vv, .. } => {
+            Message::HandshakeAck {
+                node_id, nonce, vv, ..
+            } => {
                 assert_eq!(node_id, "node-2");
                 assert_eq!(nonce, [7u8; 32]);
                 assert!(vv.is_empty());
@@ -270,7 +289,11 @@ mod tests {
         };
         let decoded = roundtrip(&msg);
         match decoded {
-            Message::Notification { event, node_id, addr } => {
+            Message::Notification {
+                event,
+                node_id,
+                addr,
+            } => {
                 assert_eq!(event, MembershipEvent::NodeJoined);
                 assert_eq!(node_id, "n1");
                 assert_eq!(addr, "1.2.3.4:5");
@@ -420,8 +443,12 @@ mod tests {
         let requests = vec![
             ControlRequest::Status,
             ControlRequest::Nodes,
-            ControlRequest::Join { addr: "1.2.3.4:5".into() },
-            ControlRequest::Leave { addr: "5.6.7.8:9".into() },
+            ControlRequest::Join {
+                addr: "1.2.3.4:5".into(),
+            },
+            ControlRequest::Leave {
+                addr: "5.6.7.8:9".into(),
+            },
             ControlRequest::Shutdown,
         ];
         for req in &requests {
@@ -435,7 +462,9 @@ mod tests {
     fn test_control_response_json_roundtrip() {
         let responses = vec![
             ControlResponse::Ok,
-            ControlResponse::Error { message: "something failed".into() },
+            ControlResponse::Error {
+                message: "something failed".into(),
+            },
             ControlResponse::Status {
                 node_id: "n1".into(),
                 listen_addr: "0.0.0.0:4369".into(),

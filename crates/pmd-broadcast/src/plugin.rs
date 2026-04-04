@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pmd_discovery::{DiscoveryContext, DiscoveryPlugin};
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,10 @@ impl DiscoveryPlugin for BroadcastPlugin {
         "broadcast"
     }
 
-    async fn start(&self, ctx: DiscoveryContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn start(
+        &self,
+        ctx: DiscoveryContext,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.running.store(true, Ordering::SeqCst);
 
         let sock = UdpSocket::bind(("0.0.0.0", self.port)).await?;

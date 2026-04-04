@@ -81,8 +81,8 @@ pub async fn run(config: Config, node_id: String, metadata: HashMap<String, Stri
     // Remove stale socket file
     let _ = std::fs::remove_file(&config.socket_path);
 
-    let control_listener = UnixListener::bind(&config.socket_path)
-        .context("failed to bind control socket")?;
+    let control_listener =
+        UnixListener::bind(&config.socket_path).context("failed to bind control socket")?;
 
     std::fs::write(&config.pid_path, std::process::id().to_string())
         .context("failed to write PID file")?;
@@ -100,8 +100,14 @@ pub async fn run(config: Config, node_id: String, metadata: HashMap<String, Stri
     let server_config = Arc::clone(&config);
     let server_cookie = Arc::clone(&cookie);
     tokio::spawn(async move {
-        if let Err(e) =
-            server::run_server(listener, acceptor, server_config, server_cookie, server_state).await
+        if let Err(e) = server::run_server(
+            listener,
+            acceptor,
+            server_config,
+            server_cookie,
+            server_state,
+        )
+        .await
         {
             error!(error = %e, "server error");
         }
@@ -157,9 +163,7 @@ async fn process_tick(
     let reconnects: Vec<SocketAddr> = st
         .known_peers
         .iter()
-        .filter(|(addr, rs)| {
-            rs.next_try <= now && !st.peers.values().any(|p| p.id.addr == **addr)
-        })
+        .filter(|(addr, rs)| rs.next_try <= now && !st.peers.values().any(|p| p.id.addr == **addr))
         .map(|(addr, _)| *addr)
         .collect();
 
@@ -258,8 +262,7 @@ pub fn broadcast_events(state: &DaemonState, changes: &[MembershipChange]) {
 /// Load the cookie from disk, or generate a new one.
 fn load_or_generate_cookie(config: &Config) -> Result<Vec<u8>> {
     if config.cookie_path.exists() {
-        let cookie = std::fs::read(&config.cookie_path)
-            .context("failed to read cookie file")?;
+        let cookie = std::fs::read(&config.cookie_path).context("failed to read cookie file")?;
         if cookie.is_empty() {
             anyhow::bail!("cookie file is empty: {}", config.cookie_path.display());
         }
@@ -269,8 +272,7 @@ fn load_or_generate_cookie(config: &Config) -> Result<Vec<u8>> {
         use rand::RngCore;
         let mut cookie = vec![0u8; 32];
         rand::thread_rng().fill_bytes(&mut cookie);
-        std::fs::write(&config.cookie_path, &cookie)
-            .context("failed to write cookie file")?;
+        std::fs::write(&config.cookie_path, &cookie).context("failed to write cookie file")?;
 
         #[cfg(unix)]
         {

@@ -29,7 +29,10 @@ pub trait DiscoveryPlugin: Send + Sync {
     fn name(&self) -> &str;
 
     /// Start the discovery loop. Runs until cancelled or an error occurs.
-    async fn start(&self, ctx: DiscoveryContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn start(
+        &self,
+        ctx: DiscoveryContext,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     /// Signal the plugin to stop.
     async fn stop(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;

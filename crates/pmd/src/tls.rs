@@ -13,10 +13,9 @@ pub fn generate_self_signed_cert(config: &Config) -> Result<()> {
     let key_pair = KeyPair::generate()?;
 
     let mut params = CertificateParams::new(vec!["pmd-node".to_string()])?;
-    params.distinguished_name.push(
-        rcgen::DnType::CommonName,
-        "pmd-node",
-    );
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "pmd-node");
 
     let cert = params.self_signed(&key_pair)?;
 
@@ -35,15 +34,15 @@ pub fn generate_self_signed_cert(config: &Config) -> Result<()> {
 }
 
 /// Load certificate and key from PEM files, generating them if they don't exist.
-fn load_or_generate_identity(config: &Config) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+fn load_or_generate_identity(
+    config: &Config,
+) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
     if !config.cert_path.exists() || !config.key_path.exists() {
         generate_self_signed_cert(config)?;
     }
 
-    let cert_pem = std::fs::read(&config.cert_path)
-        .context("failed to read TLS certificate")?;
-    let key_pem = std::fs::read(&config.key_path)
-        .context("failed to read TLS private key")?;
+    let cert_pem = std::fs::read(&config.cert_path).context("failed to read TLS certificate")?;
+    let key_pem = std::fs::read(&config.key_path).context("failed to read TLS private key")?;
 
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut &cert_pem[..])
         .collect::<Result<Vec<_>, _>>()
@@ -190,7 +189,11 @@ mod tests {
     fn test_build_acceptor_succeeds() {
         let config = test_config();
         let acceptor = build_acceptor(&config);
-        assert!(acceptor.is_ok(), "build_acceptor should succeed: {:?}", acceptor.err());
+        assert!(
+            acceptor.is_ok(),
+            "build_acceptor should succeed: {:?}",
+            acceptor.err()
+        );
 
         let _ = std::fs::remove_dir_all(&config.home_dir);
     }
@@ -199,7 +202,11 @@ mod tests {
     fn test_build_connector_succeeds() {
         let config = test_config();
         let connector = build_connector(&config);
-        assert!(connector.is_ok(), "build_connector should succeed: {:?}", connector.err());
+        assert!(
+            connector.is_ok(),
+            "build_connector should succeed: {:?}",
+            connector.err()
+        );
 
         let _ = std::fs::remove_dir_all(&config.home_dir);
     }
@@ -224,13 +231,10 @@ mod tests {
             let _tls = connector.connect(server_name, stream).await.unwrap();
         });
 
-        let timeout = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            async {
-                server.await.unwrap();
-                client.await.unwrap();
-            },
-        )
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            server.await.unwrap();
+            client.await.unwrap();
+        })
         .await;
         assert!(timeout.is_ok(), "TLS handshake timed out");
 

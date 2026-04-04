@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use concordat::vv::VersionVector;
 use rand::RngCore;
 use tokio::io::{ReadHalf, WriteHalf};
@@ -12,10 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::daemon::DaemonState;
-use crate::protocol::{
-    Message, compute_cookie_hmac, read_frame, verify_cookie_hmac,
-    write_frame,
-};
+use crate::protocol::{Message, compute_cookie_hmac, read_frame, verify_cookie_hmac, write_frame};
 
 /// Unique identifier for a connected peer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -285,7 +282,8 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let mut heartbeat_interval = time::interval(Duration::from_secs(config.heartbeat_interval_secs));
+    let mut heartbeat_interval =
+        time::interval(Duration::from_secs(config.heartbeat_interval_secs));
     let mut sync_interval = time::interval(Duration::from_secs(config.sync_interval_secs));
     let shutdown = state.lock().await.shutdown.clone();
 

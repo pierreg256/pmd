@@ -88,7 +88,11 @@ impl Config {
             ConfigFile::default()
         };
 
-        let port = if cli_port != 4369 { cli_port } else { cf.port.unwrap_or(cli_port) };
+        let port = if cli_port != 4369 {
+            cli_port
+        } else {
+            cf.port.unwrap_or(cli_port)
+        };
         let bind = if cli_bind != "0.0.0.0" {
             cli_bind.to_string()
         } else {
@@ -119,8 +123,7 @@ impl Config {
 
     /// Ensure the home and TLS directories exist.
     pub fn ensure_dirs(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.home_dir)
-            .context("failed to create ~/.pmd")?;
+        std::fs::create_dir_all(&self.home_dir).context("failed to create ~/.pmd")?;
         std::fs::create_dir_all(self.home_dir.join("tls"))
             .context("failed to create ~/.pmd/tls")?;
         Ok(())
@@ -173,7 +176,11 @@ mod tests {
 
     #[test]
     fn test_config_ensure_dirs() {
-        let tmpdir = std::env::temp_dir().join(format!("pmd-cfg-{}-{}", std::process::id(), rand::random::<u32>()));
+        let tmpdir = std::env::temp_dir().join(format!(
+            "pmd-cfg-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
         let config = Config {
             port: 4369,
             bind: "0.0.0.0".into(),

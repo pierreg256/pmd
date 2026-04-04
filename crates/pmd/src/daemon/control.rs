@@ -7,9 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::daemon::DaemonState;
-use crate::protocol::{
-    ControlRequest, ControlResponse, NodeInfoResponse, ServiceEntry,
-};
+use crate::protocol::{ControlRequest, ControlResponse, NodeInfoResponse, ServiceEntry};
 
 /// Run the control socket server.
 pub async fn run_control_socket(
@@ -35,10 +33,7 @@ pub async fn run_control_socket(
     }
 }
 
-async fn handle_control_client(
-    stream: UnixStream,
-    state: Arc<Mutex<DaemonState>>,
-) -> Result<()> {
+async fn handle_control_client(stream: UnixStream, state: Arc<Mutex<DaemonState>>) -> Result<()> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -147,7 +142,11 @@ async fn dispatch_request(
             st.shutdown.cancel();
             ControlResponse::Ok
         }
-        ControlRequest::Register { name, port, metadata } => {
+        ControlRequest::Register {
+            name,
+            port,
+            metadata,
+        } => {
             let mut st = state.lock().await;
             st.membership.register_service(&name, port, metadata);
             ControlResponse::Ok
@@ -252,9 +251,16 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let resp = send_control_request(&socket_path, &ControlRequest::Status).await.unwrap();
+        let resp = send_control_request(&socket_path, &ControlRequest::Status)
+            .await
+            .unwrap();
         match resp {
-            ControlResponse::Status { node_id, peer_count, node_count, .. } => {
+            ControlResponse::Status {
+                node_id,
+                peer_count,
+                node_count,
+                ..
+            } => {
                 assert_eq!(node_id, "test-node");
                 assert_eq!(peer_count, 0);
                 assert_eq!(node_count, 1);
@@ -276,7 +282,9 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let resp = send_control_request(&socket_path, &ControlRequest::Nodes).await.unwrap();
+        let resp = send_control_request(&socket_path, &ControlRequest::Nodes)
+            .await
+            .unwrap();
         match resp {
             ControlResponse::Nodes { nodes } => {
                 assert_eq!(nodes.len(), 1);
@@ -301,8 +309,12 @@ mod tests {
 
         let resp = send_control_request(
             &socket_path,
-            &ControlRequest::Join { addr: "10.0.0.1:4369".into() },
-        ).await.unwrap();
+            &ControlRequest::Join {
+                addr: "10.0.0.1:4369".into(),
+            },
+        )
+        .await
+        .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
         let st = state.lock().await;
         assert_eq!(st.pending_joins, vec!["10.0.0.1:4369".to_string()]);
@@ -323,8 +335,12 @@ mod tests {
 
         let resp = send_control_request(
             &socket_path,
-            &ControlRequest::Leave { addr: "10.0.0.1:4369".into() },
-        ).await.unwrap();
+            &ControlRequest::Leave {
+                addr: "10.0.0.1:4369".into(),
+            },
+        )
+        .await
+        .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
         let st = state.lock().await;
         assert_eq!(st.pending_leaves, vec!["10.0.0.1:4369".to_string()]);
@@ -344,7 +360,9 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let resp = send_control_request(&socket_path, &ControlRequest::Shutdown).await.unwrap();
+        let resp = send_control_request(&socket_path, &ControlRequest::Shutdown)
+            .await
+            .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
         assert!(shutdown.is_cancelled());
         let _ = std::fs::remove_file(&socket_path);
@@ -370,14 +388,16 @@ mod tests {
                 port: 8080,
                 metadata: HashMap::new(),
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
 
         // Lookup
-        let resp = send_control_request(
-            &socket_path,
-            &ControlRequest::Lookup { name: "web".into() },
-        ).await.unwrap();
+        let resp =
+            send_control_request(&socket_path, &ControlRequest::Lookup { name: "web".into() })
+                .await
+                .unwrap();
         match resp {
             ControlResponse::Services { entries } => {
                 assert_eq!(entries.len(), 1);
@@ -391,14 +411,16 @@ mod tests {
         let resp = send_control_request(
             &socket_path,
             &ControlRequest::Unregister { name: "web".into() },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
 
         // Lookup again — empty
-        let resp = send_control_request(
-            &socket_path,
-            &ControlRequest::Lookup { name: "web".into() },
-        ).await.unwrap();
+        let resp =
+            send_control_request(&socket_path, &ControlRequest::Lookup { name: "web".into() })
+                .await
+                .unwrap();
         match resp {
             ControlResponse::Services { entries } => assert!(entries.is_empty()),
             other => panic!("expected Services, got {other:?}"),

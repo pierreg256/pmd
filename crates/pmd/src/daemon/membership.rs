@@ -107,7 +107,10 @@ impl Membership {
     }
 
     /// Look up all instances of a service across the cluster.
-    pub fn lookup_service(&self, name: &str) -> Vec<(String, SocketAddr, u16, HashMap<String, String>)> {
+    pub fn lookup_service(
+        &self,
+        name: &str,
+    ) -> Vec<(String, SocketAddr, u16, HashMap<String, String>)> {
         let state = self.doc.materialize();
         let mut results = Vec::new();
 
@@ -150,15 +153,18 @@ impl Membership {
         };
 
         match services.get(node_id) {
-            Some(serde_json::Value::Object(svcs)) => {
-                svcs.iter()
-                    .filter_map(|(name, val)| {
-                        let port = val.get("port")?.as_u64()? as u16;
-                        let metadata = parse_metadata(val.get("metadata"));
-                        Some(ServiceInfo { name: name.clone(), port, metadata })
+            Some(serde_json::Value::Object(svcs)) => svcs
+                .iter()
+                .filter_map(|(name, val)| {
+                    let port = val.get("port")?.as_u64()? as u16;
+                    let metadata = parse_metadata(val.get("metadata"));
+                    Some(ServiceInfo {
+                        name: name.clone(),
+                        port,
+                        metadata,
                     })
-                    .collect()
-            }
+                })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -389,7 +395,11 @@ mod tests {
         m1.remove_node("node-c");
         let delta = m1.full_delta();
         let changes = m2.merge_remote(&delta).unwrap();
-        assert!(changes.iter().any(|c| c.event == MembershipEvent::NodeLeft && c.node_id == "node-c"));
+        assert!(
+            changes
+                .iter()
+                .any(|c| c.event == MembershipEvent::NodeLeft && c.node_id == "node-c")
+        );
     }
 
     #[test]
@@ -482,7 +492,11 @@ mod tests {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
         m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
-        m1.register_service("api", 3000, HashMap::from([("version".into(), "2.0".into())]));
+        m1.register_service(
+            "api",
+            3000,
+            HashMap::from([("version".into(), "2.0".into())]),
+        );
 
         let delta = m1.full_delta();
         m2.merge_remote(&delta).unwrap();
