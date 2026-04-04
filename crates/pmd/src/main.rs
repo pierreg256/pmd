@@ -61,24 +61,24 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Stop => {
-            let config = Config::new(4369, "0.0.0.0".into())?;
+        Commands::Stop { port } => {
+            let config = Config::new(port, "0.0.0.0".into())?;
             let resp = send_control_request(&config.socket_path, &ControlRequest::Shutdown)
                 .await
                 .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 
-        Commands::Status => {
-            let config = Config::new(4369, "0.0.0.0".into())?;
+        Commands::Status { port } => {
+            let config = Config::new(port, "0.0.0.0".into())?;
             let resp = send_control_request(&config.socket_path, &ControlRequest::Status)
                 .await
                 .context("failed to connect to daemon — is it running?")?;
             print_response(&resp);
         }
 
-        Commands::Join { addr } => {
-            let config = Config::new(4369, "0.0.0.0".into())?;
+        Commands::Join { addr, port } => {
+            let config = Config::new(port, "0.0.0.0".into())?;
             let resp =
                 send_control_request(&config.socket_path, &ControlRequest::Join { addr })
                     .await
@@ -86,8 +86,8 @@ async fn main() -> Result<()> {
             print_response(&resp);
         }
 
-        Commands::Leave { addr } => {
-            let config = Config::new(4369, "0.0.0.0".into())?;
+        Commands::Leave { addr, port } => {
+            let config = Config::new(port, "0.0.0.0".into())?;
             let resp =
                 send_control_request(&config.socket_path, &ControlRequest::Leave { addr })
                     .await
@@ -95,8 +95,8 @@ async fn main() -> Result<()> {
             print_response(&resp);
         }
 
-        Commands::Nodes => {
-            let config = Config::new(4369, "0.0.0.0".into())?;
+        Commands::Nodes { port } => {
+            let config = Config::new(port, "0.0.0.0".into())?;
             let resp = send_control_request(&config.socket_path, &ControlRequest::Nodes)
                 .await
                 .context("failed to connect to daemon — is it running?")?;

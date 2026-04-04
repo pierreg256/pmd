@@ -41,8 +41,8 @@ impl Config {
         Ok(Self {
             port,
             bind,
-            socket_path: home_dir.join("pmd.sock"),
-            pid_path: home_dir.join("pmd.pid"),
+            socket_path: home_dir.join(format!("pmd-{port}.sock")),
+            pid_path: home_dir.join(format!("pmd-{port}.pid")),
             cert_path: tls_dir.join("cert.pem"),
             key_path: tls_dir.join("key.pem"),
             cookie_path: home_dir.join("cookie"),
@@ -87,8 +87,8 @@ mod tests {
     #[test]
     fn test_config_paths_under_home() {
         let config = Config::new(4369, "0.0.0.0".into()).unwrap();
-        assert!(config.socket_path.ends_with("pmd.sock"));
-        assert!(config.pid_path.ends_with("pmd.pid"));
+        assert!(config.socket_path.ends_with("pmd-4369.sock"));
+        assert!(config.pid_path.ends_with("pmd-4369.pid"));
         assert!(config.cert_path.ends_with("cert.pem"));
         assert!(config.key_path.ends_with("key.pem"));
         assert!(config.cookie_path.ends_with("cookie"));
@@ -116,5 +116,16 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&tmpdir);
+    }
+
+    #[test]
+    fn test_config_different_ports_different_sockets() {
+        let c1 = Config::new(4369, "0.0.0.0".into()).unwrap();
+        let c2 = Config::new(4370, "0.0.0.0".into()).unwrap();
+        assert_ne!(c1.socket_path, c2.socket_path);
+        assert_ne!(c1.pid_path, c2.pid_path);
+        // But TLS certs and cookie are shared
+        assert_eq!(c1.cert_path, c2.cert_path);
+        assert_eq!(c1.cookie_path, c2.cookie_path);
     }
 }

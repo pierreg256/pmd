@@ -29,23 +29,43 @@ pub enum Commands {
     },
 
     /// Stop the running PMD daemon
-    Stop,
+    Stop {
+        /// Port of the daemon instance to stop
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
 
     /// Show daemon status and connected nodes
-    Status,
+    Status {
+        /// Port of the daemon instance to query
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
 
     /// Manually connect to a peer
     Join {
         /// Peer address (host:port)
         addr: String,
+
+        /// Port of the local daemon instance
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
     },
 
     /// Disconnect from a peer
     Leave {
         /// Peer address (host:port)
         addr: String,
+
+        /// Port of the local daemon instance
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
     },
 
     /// List all known nodes in the cluster
-    Nodes,
+    Nodes {
+        /// Port of the daemon instance to query
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
 }
