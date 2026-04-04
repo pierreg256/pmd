@@ -68,6 +68,14 @@ pub enum ControlRequest {
     Join { addr: String },
     Leave { addr: String },
     Shutdown,
+    /// Register a named service on this node (Phase 7: port mapping).
+    Register { name: String, port: u16, metadata: std::collections::HashMap<String, String> },
+    /// Unregister a named service.
+    Unregister { name: String },
+    /// Look up a registered service by name across the cluster.
+    Lookup { name: String },
+    /// Subscribe to membership events (long-lived connection).
+    Subscribe,
 }
 
 /// Responses from daemon to CLI.
@@ -84,6 +92,16 @@ pub enum ControlResponse {
     Nodes {
         nodes: Vec<NodeInfoResponse>,
     },
+    /// Response to Lookup: list of endpoints for a service name.
+    Services {
+        entries: Vec<ServiceEntry>,
+    },
+    /// Membership event pushed to subscribers.
+    Event {
+        event: MembershipEvent,
+        node_id: String,
+        addr: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +109,21 @@ pub struct NodeInfoResponse {
     pub node_id: String,
     pub addr: String,
     pub joined_at: u64,
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub services: Vec<ServiceEntry>,
+}
+
+/// A registered service entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceEntry {
+    pub name: String,
+    pub node_id: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +447,23 @@ mod tests {
                     node_id: "n1".into(),
                     addr: "1.2.3.4:4369".into(),
                     joined_at: 123456,
+                    metadata: std::collections::HashMap::new(),
+                    services: vec![],
                 }],
+            },
+            ControlResponse::Services {
+                entries: vec![ServiceEntry {
+                    name: "web".into(),
+                    node_id: "n1".into(),
+                    host: "1.2.3.4".into(),
+                    port: 8080,
+                    metadata: std::collections::HashMap::new(),
+                }],
+            },
+            ControlResponse::Event {
+                event: MembershipEvent::NodeJoined,
+                node_id: "n1".into(),
+                addr: "1.2.3.4:4369".into(),
             },
         ];
         for resp in &responses {

@@ -160,9 +160,12 @@ mod tests {
             cert_path: tmpdir.join("tls/cert.pem"),
             key_path: tmpdir.join("tls/key.pem"),
             cookie_path: tmpdir.join("cookie"),
+            ca_cert_path: None,
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
+            reconnect_base_secs: 1,
+            reconnect_max_secs: 60,
         }
     }
 

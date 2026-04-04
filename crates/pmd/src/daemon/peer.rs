@@ -330,6 +330,7 @@ where
                                 "membership change"
                             );
                         }
+                        crate::daemon::broadcast_events(&st, &changes);
                     }
                     Some(Message::Notification { event, node_id, addr }) => {
                         info!(?event, node_id = %node_id, addr = %addr, "peer notification");

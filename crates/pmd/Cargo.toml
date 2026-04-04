@@ -34,3 +34,4 @@ rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 daemonize = "0.5"
 dirs = "6"
+toml = "0.8"

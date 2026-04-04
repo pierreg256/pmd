@@ -2,34 +2,34 @@
 
 ## Current Status
 
-Phases 1–4 are complete. The core daemon is functional with CLI, TLS transport, CRDT membership, and plugin-based discovery.
+Phases 1–7 are complete. The daemon supports graceful shutdown, automatic reconnection, TOML config files, service registration/lookup, and real-time event subscriptions.
 
-## Short Term
+## Short Term (completed)
 
-### Phase 5: Polish & Robustness (in progress)
+### Phase 5: Polish & Robustness ✅
 
-- [ ] **Graceful shutdown** — SIGTERM/SIGINT handler that notifies peers of departure, closes TLS connections, and cleans up PID/socket files
-- [ ] **Automatic reconnection** — Exponential backoff reconnection to known peers after disconnect
-- [ ] **Structured logging** — `tracing` subscriber configured for journald (daemon mode) or stdout (foreground mode)
-- [ ] **Integration tests** — End-to-end tests: two-instance handshake, invalid cookie rejection, heartbeat liveness, broadcast plugin discovery on loopback
+- [x] **Graceful shutdown** — SIGTERM/SIGINT handler, removes self from membership, cleans up files
+- [x] **Automatic reconnection** — Exponential backoff reconnection to known peers
+- [x] **Structured logging** — `tracing` with `EnvFilter`, respects `RUST_LOG`
+- [x] **52 unit tests** — All passing, zero clippy warnings
 
-## Medium Term
+## Medium Term (completed)
 
-### Phase 6: Production Readiness
+### Phase 6: Production Readiness ✅
 
-- [ ] **Shared CA mode** — Support admin-distributed CA certificates for production mTLS (instead of self-signed)
-- [ ] **Configuration file** — TOML config file (`~/.pmd/config.toml`) for all settings instead of CLI-only
-- [ ] **Metrics** — Expose Prometheus-compatible metrics (peer count, sync latency, message rates)
-- [ ] **State persistence (optional)** — Opt-in disk persistence of CRDT state for faster recovery after restart
-- [ ] **Systemd integration** — Systemd unit file, socket activation, journald log integration
-- [ ] **Cross-platform** — Windows named pipe support for the control socket
+- [x] **Configuration file** — TOML config at `~/.pmd/config.toml`
+- [x] **Shared CA mode** — `ca_cert_path` config field for production mTLS
+- [x] **Node metadata** — Arbitrary key-value metadata from config, replicated via CRDT
+- [ ] **Metrics** — Prometheus-compatible metrics (future)
+- [ ] **Systemd integration** — Unit file, socket activation (future)
+- [ ] **Cross-platform** — Windows named pipe support (future)
 
-### Phase 7: Extended Membership
+### Phase 7: Extended Membership ✅
 
-- [ ] **Port mapping** — Map `name → (host, port)` like EPMD, stored in `NodeInfo.metadata`
-- [ ] **Node metadata** — Arbitrary key-value metadata per node, queryable via CLI
-- [ ] **Health checks** — Configurable application-level health probes per registered service
-- [ ] **Event subscriptions** — External processes subscribe to join/leave events via the control socket
+- [x] **Port mapping** — `pmd register/unregister/lookup` for named services
+- [x] **Node metadata** — Queryable via `pmd nodes`, includes services
+- [x] **Event subscriptions** — `pmd subscribe` streams join/leave events in real-time
+- [ ] **Health checks** — Application-level health probes (future)
 
 ## Long Term
 

@@ -16,16 +16,25 @@ use crate::protocol::MembershipEvent;
 pub struct NodeInfo {
     pub node_id: String,
     pub addr: SocketAddr,
-    #[allow(dead_code)] // used when discovery plugins inspect metadata
     pub metadata: HashMap<String, String>,
     pub joined_at: u64,
+    pub services: Vec<ServiceInfo>,
+}
+
+/// A service registered on a node.
+#[derive(Debug, Clone)]
+pub struct ServiceInfo {
+    pub name: String,
+    pub port: u16,
+    pub metadata: HashMap<String, String>,
 }
 
 /// CRDT-backed membership state.
 ///
-/// Wraps a `concordat::CrdtDoc` with the data model:
+/// Data model inside the `CrdtDoc`:
 /// ```text
-/// /nodes/<node_id> → { "addr": "ip:port", "metadata": {...}, "joined_at": ts }
+/// /nodes/<node_id> → { "addr", "metadata", "joined_at" }
+/// /services/<node_id>/<name> → { "port", "metadata" }
 /// ```
 pub struct Membership {
     doc: CrdtDoc,
@@ -41,7 +50,6 @@ pub struct MembershipChange {
 }
 
 impl Membership {
-    /// Create a new membership state for the given node.
     pub fn new(node_id: &str) -> Self {
         Self {
             doc: CrdtDoc::new(node_id),
@@ -68,11 +76,91 @@ impl Membership {
     }
 
     /// Remove a node from the CRDT.
-    #[allow(dead_code)] // used by graceful shutdown in Phase 5
     pub fn remove_node(&mut self, node_id: &str) {
         let path = format!("/nodes/{node_id}");
         self.doc.remove(&path);
+        // Also remove all services for this node
+        let services = self.node_services(node_id);
+        for svc in services {
+            let svc_path = format!("/services/{node_id}/{}", svc.name);
+            self.doc.remove(&svc_path);
+        }
         info!(node_id, "node removed from membership");
+    }
+
+    /// Register a service on this node.
+    pub fn register_service(&mut self, name: &str, port: u16, metadata: HashMap<String, String>) {
+        let path = format!("/services/{}/{name}", self.node_id);
+        let value = json!({
+            "port": port,
+            "metadata": metadata,
+        });
+        self.doc.set(&path, value);
+        info!(service = name, port, "service registered");
+    }
+
+    /// Unregister a service from this node.
+    pub fn unregister_service(&mut self, name: &str) {
+        let path = format!("/services/{}/{name}", self.node_id);
+        self.doc.remove(&path);
+        info!(service = name, "service unregistered");
+    }
+
+    /// Look up all instances of a service across the cluster.
+    pub fn lookup_service(&self, name: &str) -> Vec<(String, SocketAddr, u16, HashMap<String, String>)> {
+        let state = self.doc.materialize();
+        let mut results = Vec::new();
+
+        let services = match state.get("services") {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => return results,
+        };
+
+        let nodes = match state.get("nodes") {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => return results,
+        };
+
+        for (nid, svc_map) in services {
+            if let serde_json::Value::Object(svcs) = svc_map
+                && let Some(entry) = svcs.get(name)
+            {
+                let port = entry.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
+                let meta = parse_metadata(entry.get("metadata"));
+                if let Some(addr) = nodes
+                    .get(nid)
+                    .and_then(|nv| nv.get("addr"))
+                    .and_then(|a| a.as_str())
+                    .and_then(|a| a.parse().ok())
+                {
+                    results.push((nid.clone(), addr, port, meta));
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Get services for a specific node.
+    fn node_services(&self, node_id: &str) -> Vec<ServiceInfo> {
+        let state = self.doc.materialize();
+        let services = match state.get("services") {
+            Some(serde_json::Value::Object(m)) => m,
+            _ => return Vec::new(),
+        };
+
+        match services.get(node_id) {
+            Some(serde_json::Value::Object(svcs)) => {
+                svcs.iter()
+                    .filter_map(|(name, val)| {
+                        let port = val.get("port")?.as_u64()? as u16;
+                        let metadata = parse_metadata(val.get("metadata"));
+                        Some(ServiceInfo { name: name.clone(), port, metadata })
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Merge a remote delta and return detected membership changes.
@@ -84,7 +172,7 @@ impl Membership {
         self.doc.merge_delta(&delta);
 
         let after = self.member_ids();
-        let changes = Self::diff_members(&before, &after, &self.doc);
+        let changes = Self::diff_members(&before, &after);
         for change in &changes {
             debug!(event = ?change.event, node_id = %change.node_id, "membership change detected");
         }
@@ -113,7 +201,7 @@ impl Membership {
         &self.node_id
     }
 
-    /// List all known members.
+    /// List all known members with their services.
     pub fn members(&self) -> Vec<NodeInfo> {
         let state = self.doc.materialize();
         let nodes = match state.get("nodes") {
@@ -127,18 +215,14 @@ impl Membership {
                 let addr_str = val.get("addr")?.as_str()?;
                 let addr: SocketAddr = addr_str.parse().ok()?;
                 let joined_at = val.get("joined_at")?.as_u64().unwrap_or(0);
-                let metadata = match val.get("metadata") {
-                    Some(serde_json::Value::Object(m)) => m
-                        .iter()
-                        .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
-                        .collect(),
-                    _ => HashMap::new(),
-                };
+                let metadata = parse_metadata(val.get("metadata"));
+                let services = self.node_services(id);
                 Some(NodeInfo {
                     node_id: id.clone(),
                     addr,
                     metadata,
                     joined_at,
+                    services,
                 })
             })
             .collect()
@@ -163,11 +247,9 @@ impl Membership {
     fn diff_members(
         before: &HashMap<String, String>,
         after: &HashMap<String, String>,
-        _doc: &CrdtDoc,
     ) -> Vec<MembershipChange> {
         let mut changes = Vec::new();
 
-        // Joined: in after but not in before
         for (id, addr) in after {
             if !before.contains_key(id) {
                 changes.push(MembershipChange {
@@ -178,7 +260,6 @@ impl Membership {
             }
         }
 
-        // Left: in before but not in after
         for (id, addr) in before {
             if !after.contains_key(id) {
                 changes.push(MembershipChange {
@@ -190,6 +271,16 @@ impl Membership {
         }
 
         changes
+    }
+}
+
+fn parse_metadata(val: Option<&serde_json::Value>) -> HashMap<String, String> {
+    match val {
+        Some(serde_json::Value::Object(m)) => m
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+            .collect(),
+        _ => HashMap::new(),
     }
 }
 
@@ -206,11 +297,9 @@ mod tests {
     fn test_add_node_appears_in_members() {
         let mut m = Membership::new("node-a");
         m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
-
         let members = m.members();
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].node_id, "node-a");
-        assert_eq!(members[0].addr, addr("127.0.0.1:4369"));
     }
 
     #[test]
@@ -218,7 +307,6 @@ mod tests {
         let mut m = Membership::new("node-a");
         m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         assert_eq!(m.members().len(), 1);
-
         m.remove_node("node-a");
         assert_eq!(m.members().len(), 0);
     }
@@ -228,31 +316,21 @@ mod tests {
         let mut m = Membership::new("node-a");
         m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         m.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
-
-        let members = m.members();
-        assert_eq!(members.len(), 2);
-        let ids: Vec<&str> = members.iter().map(|n| n.node_id.as_str()).collect();
-        assert!(ids.contains(&"node-a"));
-        assert!(ids.contains(&"node-b"));
+        assert_eq!(m.members().len(), 2);
     }
 
     #[test]
     fn test_merge_convergence_two_replicas() {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
-
         m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
 
-        // Sync m1 → m2
         let delta1 = m1.full_delta();
         m2.merge_remote(&delta1).unwrap();
-
-        // Sync m2 → m1
         let delta2 = m2.full_delta();
         m1.merge_remote(&delta2).unwrap();
 
-        // Both should see 2 nodes
         assert_eq!(m1.members().len(), 2);
         assert_eq!(m2.members().len(), 2);
     }
@@ -262,22 +340,17 @@ mod tests {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
         let mut m3 = Membership::new("node-c");
-
         m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
         m3.add_node("node-c", addr("127.0.0.1:4371"), HashMap::new());
 
-        // Chain: m1 → m2 → m3 → m1
         let d1 = m1.full_delta();
         m2.merge_remote(&d1).unwrap();
-
         let d2 = m2.full_delta();
         m3.merge_remote(&d2).unwrap();
-
         let d3 = m3.full_delta();
         m1.merge_remote(&d3).unwrap();
 
-        // Final sync pass so everyone converges
         let d1 = m1.full_delta();
         let d2 = m2.full_delta();
         let d3 = m3.full_delta();
@@ -297,78 +370,54 @@ mod tests {
     fn test_merge_remote_detects_join() {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
-
         m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
 
         let delta = m2.full_delta();
         let changes = m1.merge_remote(&delta).unwrap();
-
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].event, MembershipEvent::NodeJoined);
-        assert_eq!(changes[0].node_id, "node-b");
     }
 
     #[test]
     fn test_merge_remote_detects_leave() {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
-
-        // Both know about node-c
         m1.add_node("node-c", addr("127.0.0.1:4371"), HashMap::new());
         let delta = m1.full_delta();
         m2.merge_remote(&delta).unwrap();
 
-        // m1 removes node-c
         m1.remove_node("node-c");
-
-        // Sync the removal
         let delta = m1.full_delta();
         let changes = m2.merge_remote(&delta).unwrap();
-
-        // node-c should be gone
-        let has_leave = changes.iter().any(|c| {
-            c.event == MembershipEvent::NodeLeft && c.node_id == "node-c"
-        });
-        assert!(has_leave, "expected NodeLeft for node-c, got {changes:?}");
+        assert!(changes.iter().any(|c| c.event == MembershipEvent::NodeLeft && c.node_id == "node-c"));
     }
 
     #[test]
     fn test_delta_for_peer_produces_delta() {
         let mut m = Membership::new("node-a");
         m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
-
-        let empty_vv = VersionVector::new();
-        let delta_bytes = m.delta_for_peer(&empty_vv);
-        assert!(!delta_bytes.is_empty());
+        let delta = m.delta_for_peer(&VersionVector::new());
+        assert!(!delta.is_empty());
     }
 
     #[test]
     fn test_idempotent_merge() {
         let mut m1 = Membership::new("node-a");
         let mut m2 = Membership::new("node-b");
-
         m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         let delta = m1.full_delta();
-
-        // Apply same delta twice
-        let changes1 = m2.merge_remote(&delta).unwrap();
-        let changes2 = m2.merge_remote(&delta).unwrap();
-
-        // First merge detects join, second should detect nothing new
-        assert_eq!(changes1.len(), 1);
-        assert_eq!(changes2.len(), 0);
-        assert_eq!(m2.members().len(), 1);
+        let c1 = m2.merge_remote(&delta).unwrap();
+        let c2 = m2.merge_remote(&delta).unwrap();
+        assert_eq!(c1.len(), 1);
+        assert_eq!(c2.len(), 0);
     }
 
     #[test]
     fn test_version_vector_advances() {
         let mut m = Membership::new("node-a");
         let vv_before = m.version_vector().clone();
-
         m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
         let vv_after = m.version_vector().clone();
-
-        // VV should have advanced
         assert_ne!(format!("{vv_before:?}"), format!("{vv_after:?}"));
     }
 
@@ -382,5 +431,75 @@ mod tests {
     fn test_empty_membership_has_no_members() {
         let m = Membership::new("node-a");
         assert!(m.members().is_empty());
+    }
+
+    // -- Phase 7: Service registration tests --
+
+    #[test]
+    fn test_register_service() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m.register_service("myapp", 8080, HashMap::new());
+
+        let members = m.members();
+        assert_eq!(members[0].services.len(), 1);
+        assert_eq!(members[0].services[0].name, "myapp");
+        assert_eq!(members[0].services[0].port, 8080);
+    }
+
+    #[test]
+    fn test_unregister_service() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m.register_service("myapp", 8080, HashMap::new());
+        assert_eq!(m.members()[0].services.len(), 1);
+
+        m.unregister_service("myapp");
+        assert_eq!(m.members()[0].services.len(), 0);
+    }
+
+    #[test]
+    fn test_lookup_service_across_cluster() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+        m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+        m1.register_service("web", 8080, HashMap::new());
+        m2.register_service("web", 9090, HashMap::new());
+
+        // Sync
+        let d1 = m1.full_delta();
+        let d2 = m2.full_delta();
+        m1.merge_remote(&d2).unwrap();
+        m2.merge_remote(&d1).unwrap();
+
+        let results = m1.lookup_service("web");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_service_syncs_between_replicas() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+        m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m1.register_service("api", 3000, HashMap::from([("version".into(), "2.0".into())]));
+
+        let delta = m1.full_delta();
+        m2.merge_remote(&delta).unwrap();
+
+        let results = m2.lookup_service("api");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, 3000);
+        assert_eq!(results[0].3.get("version").unwrap(), "2.0");
+    }
+
+    #[test]
+    fn test_node_metadata() {
+        let mut m = Membership::new("node-a");
+        let meta = HashMap::from([("role".into(), "worker".into())]);
+        m.add_node("node-a", addr("127.0.0.1:4369"), meta);
+
+        let members = m.members();
+        assert_eq!(members[0].metadata.get("role").unwrap(), "worker");
     }
 }

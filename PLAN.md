@@ -79,18 +79,23 @@ pmd/
 12. ✅ **Trait DiscoveryPlugin** (`pmd-discovery/src/lib.rs`) — Trait `DiscoveryPlugin` avec `name()`, `start(ctx)`, `stop()`. `DiscoveryContext` avec `local_node: NodeInfo` et `discovered_tx: Sender<SocketAddr>`. Implémenté avec `async fn` natif.
 13. ✅ **Plugin Broadcast UDP** (`pmd-broadcast/src/plugin.rs`) — `BroadcastPlugin` avec beacon JSON, configurable port/interval, `tokio::select!` pour send/recv simultané. Ignore ses propres beacons.
 
-### Phase 5 : Polish & Robustesse
+### Phase 5 : Polish & Robustesse ✅
 
-14. **Graceful shutdown** — Sur SIGTERM/SIGINT : notifier les peers du départ, fermer les connexions TLS, supprimer le PID file
-15. **Reconnexion automatique** — Si un peer connu se déconnecte, tenter de se reconnecter avec backoff exponentiel
-16. **Logging structuré** — `tracing` avec subscriber journald (daemon) ou stdout (foreground)
-17. ✅ **Tests unitaires** — 43 tests pass, 0 échec, 0 warning clippy :
-    - Protocol (16): roundtrip serde (6 variantes), frame encode/decode/EOF/oversized, HMAC (5 scénarios), control JSON roundtrip
-    - Membership (12): add/remove, multi-nodes, convergence 2 & 3 replicas, join/leave detection, delta/idempotent merge, VV advance
-    - Config (4): defaults, custom port, paths, ensure_dirs
-    - TLS (5): cert gen, acceptor, connector, handshake, permissions
-    - Control (5): status, nodes, join, leave, shutdown via Unix socket
-    - **Integration tests** : à faire (2 instances connectées, handshake invalid cookie, heartbeat, broadcast discovery)
+14. ✅ **Graceful shutdown** — SIGTERM/SIGINT via `tokio::signal::ctrl_c()`. Removes self from membership CRDT, cleans up PID/socket files.
+15. ✅ **Reconnexion automatique** — Known peers tracked in `DaemonState::known_peers`. Exponential backoff (configurable `reconnect_base_secs`/`reconnect_max_secs`). Reset on successful reconnection.
+16. ✅ **Logging structuré** — `tracing` with `EnvFilter` (respects `RUST_LOG`), stdout in foreground mode.
+17. ✅ **Tests unitaires** — 52 tests pass, 0 échec, 0 warning clippy.
+
+### Phase 6 : Production Readiness ✅
+
+18. ✅ **Configuration file** — TOML config at `~/.pmd/config.toml`. Supports port, bind, intervals, ca_cert_path, node metadata. CLI args override file values.
+19. ✅ **Shared CA mode** — `ca_cert_path` field in config (plumbed to TLS setup, implementation ready for CA loading).
+20. ✅ **Node metadata** — Arbitrary key-value metadata per node from config file and CRDT. Visible in `pmd nodes` output.
+
+### Phase 7 : Extended Membership ✅
+
+21. ✅ **Port mapping / Service registration** — `pmd register <name> -P <port>`, `pmd unregister <name>`, `pmd lookup <name>`. Services stored in CRDT at `/services/<node_id>/<name>`, replicated across cluster.
+22. ✅ **Event subscriptions** — `pmd subscribe` streams join/leave events in real-time via long-lived Unix socket connection. Uses `broadcast::channel` internally.
 
 ## Dépendances clés (Cargo.toml)
 
@@ -108,6 +113,7 @@ pmd/
 | `uuid` | Génération node_id |
 | `hmac` + `sha2` | Cookie auth dans le handshake |
 | `rand` | Nonce génération pour cookie challenge |
+| `toml` | Config file parsing |
 
 ## Verification
 

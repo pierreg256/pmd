@@ -30,14 +30,12 @@ pub enum Commands {
 
     /// Stop the running PMD daemon
     Stop {
-        /// Port of the daemon instance to stop
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
     },
 
     /// Show daemon status and connected nodes
     Status {
-        /// Port of the daemon instance to query
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
     },
@@ -46,8 +44,6 @@ pub enum Commands {
     Join {
         /// Peer address (host:port)
         addr: String,
-
-        /// Port of the local daemon instance
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
     },
@@ -56,15 +52,46 @@ pub enum Commands {
     Leave {
         /// Peer address (host:port)
         addr: String,
-
-        /// Port of the local daemon instance
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
     },
 
     /// List all known nodes in the cluster
     Nodes {
-        /// Port of the daemon instance to query
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
+
+    /// Register a named service on this node
+    Register {
+        /// Service name
+        name: String,
+        /// Service port
+        #[arg(short = 'P', long)]
+        service_port: u16,
+        /// Port of the local daemon instance
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
+
+    /// Unregister a named service
+    Unregister {
+        /// Service name
+        name: String,
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
+
+    /// Look up a service by name across the cluster
+    Lookup {
+        /// Service name
+        name: String,
+        #[arg(short, long, default_value_t = 4369)]
+        port: u16,
+    },
+
+    /// Subscribe to membership events (streams events until interrupted)
+    Subscribe {
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
     },
