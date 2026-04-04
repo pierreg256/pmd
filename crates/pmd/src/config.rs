@@ -26,10 +26,8 @@ pub struct Config {
     pub ca_cert_path: Option<PathBuf>,
     pub sync_interval_secs: u64,
     pub heartbeat_interval_secs: u64,
-    #[allow(dead_code)] // used by reconnection timeout detection
+    #[allow(dead_code)] // used for peer timeout detection
     pub heartbeat_timeout_secs: u64,
-    pub reconnect_base_secs: u64,
-    pub reconnect_max_secs: u64,
 }
 
 /// TOML-serializable config file (`~/.pmd/config.toml`).
@@ -40,8 +38,6 @@ pub struct ConfigFile {
     pub sync_interval_secs: Option<u64>,
     pub heartbeat_interval_secs: Option<u64>,
     pub heartbeat_timeout_secs: Option<u64>,
-    pub reconnect_base_secs: Option<u64>,
-    pub reconnect_max_secs: Option<u64>,
     pub ca_cert_path: Option<String>,
     /// Discovery plugins to enable (e.g. ["broadcast"]).
     #[serde(default)]
@@ -69,8 +65,6 @@ impl Config {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
-            reconnect_base_secs: 1,
-            reconnect_max_secs: 60,
             home_dir,
         })
     }
@@ -124,8 +118,6 @@ impl Config {
             sync_interval_secs: cf.sync_interval_secs.unwrap_or(5),
             heartbeat_interval_secs: cf.heartbeat_interval_secs.unwrap_or(10),
             heartbeat_timeout_secs: cf.heartbeat_timeout_secs.unwrap_or(30),
-            reconnect_base_secs: cf.reconnect_base_secs.unwrap_or(1),
-            reconnect_max_secs: cf.reconnect_max_secs.unwrap_or(60),
             home_dir,
         };
 
@@ -159,8 +151,6 @@ mod tests {
         assert_eq!(config.sync_interval_secs, 5);
         assert_eq!(config.heartbeat_interval_secs, 10);
         assert_eq!(config.heartbeat_timeout_secs, 30);
-        assert_eq!(config.reconnect_base_secs, 1);
-        assert_eq!(config.reconnect_max_secs, 60);
         assert!(config.ca_cert_path.is_none());
     }
 
@@ -211,8 +201,6 @@ mod tests {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
-            reconnect_base_secs: 1,
-            reconnect_max_secs: 60,
         };
         config.ensure_dirs().unwrap();
         assert!(tmpdir.exists());

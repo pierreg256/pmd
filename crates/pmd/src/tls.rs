@@ -163,8 +163,6 @@ mod tests {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
-            reconnect_base_secs: 1,
-            reconnect_max_secs: 60,
         }
     }
 

@@ -226,7 +226,6 @@ mod tests {
             pending_joins: Vec::new(),
             pending_leaves: Vec::new(),
             shutdown: CancellationToken::new(),
-            known_peers: HashMap::new(),
             event_tx,
         }))
     }

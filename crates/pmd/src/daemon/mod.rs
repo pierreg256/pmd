@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::net::{TcpListener, UnixListener};
 use tokio::signal;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{broadcast, Mutex};
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -29,16 +29,8 @@ pub struct DaemonState {
     pub pending_joins: Vec<String>,
     pub pending_leaves: Vec<String>,
     pub shutdown: CancellationToken,
-    /// Known peer addresses for reconnection.
-    pub known_peers: HashMap<SocketAddr, ReconnectState>,
-    /// Broadcast channel for membership event subscribers (Phase 7).
+    /// Broadcast channel for membership event subscribers.
     pub event_tx: broadcast::Sender<MembershipChange>,
-}
-
-/// Reconnection state for a known peer.
-pub struct ReconnectState {
-    pub attempt: u32,
-    pub next_try: tokio::time::Instant,
 }
 
 /// Run the PMD daemon.
@@ -79,7 +71,6 @@ pub async fn run(
         pending_joins: Vec::new(),
         pending_leaves: Vec::new(),
         shutdown: shutdown.clone(),
-        known_peers: HashMap::new(),
         event_tx,
     }));
 
@@ -118,7 +109,7 @@ pub async fn run(
         }
     });
 
-    // Spawn discovery plugins and a task to process discovered peers
+    // Spawn discovery plugins
     let (discovered_tx, mut discovered_rx) = tokio::sync::mpsc::channel::<SocketAddr>(64);
     start_discovery_plugins(
         &discovery_plugins,
@@ -128,27 +119,24 @@ pub async fn run(
         shutdown.clone(),
     );
 
-    // Task: forward discovered peers into pending_joins
+    // Task: forward discovered peers into pending_joins (deduplicated)
     let discovery_state = Arc::clone(&state);
     tokio::spawn(async move {
         while let Some(addr) = discovered_rx.recv().await {
             let mut st = discovery_state.lock().await;
-            // Skip if already connected or already attempting connection
             let already_connected = st.peers.values().any(|p| p.id.addr == addr);
-            let already_known = st.known_peers.contains_key(&addr);
             let already_pending = st.pending_joins.iter().any(|a| a == &addr.to_string());
-            if !already_connected && !already_known && !already_pending {
+            if !already_connected && !already_pending {
                 info!(addr = %addr, "discovery: queueing peer connection");
                 st.pending_joins.push(addr.to_string());
             }
         }
     });
 
-    // Main loop: process pending joins/leaves + reconnection + signal handling
+    // Main loop: process pending joins/leaves
     let mut tick = time::interval(Duration::from_millis(500));
     loop {
         tokio::select! {
-            // Graceful shutdown on SIGTERM/SIGINT
             _ = signal::ctrl_c() => {
                 info!("received SIGINT, shutting down gracefully");
                 shutdown.cancel();
@@ -164,7 +152,7 @@ pub async fn run(
         }
     }
 
-    // Graceful shutdown: remove self from membership and notify peers
+    // Graceful shutdown: remove self from membership
     {
         let mut st = state.lock().await;
         let my_id = st.membership.node_id().to_string();
@@ -188,30 +176,22 @@ async fn process_tick(
     let mut st = state.lock().await;
     let joins: Vec<String> = st.pending_joins.drain(..).collect();
     let leaves: Vec<String> = st.pending_leaves.drain(..).collect();
-
-    // Reconnection: try known peers whose backoff has expired
-    let now = tokio::time::Instant::now();
-    let reconnects: Vec<SocketAddr> = st
-        .known_peers
-        .iter()
-        .filter(|(addr, rs)| rs.next_try <= now && !st.peers.values().any(|p| p.id.addr == **addr))
-        .map(|(addr, _)| *addr)
-        .collect();
-
     drop(st);
 
     for addr_str in joins {
         match addr_str.parse::<SocketAddr>() {
             Ok(addr) => {
-                // Track for reconnection
-                {
-                    let mut st = state.lock().await;
-                    st.known_peers.entry(addr).or_insert(ReconnectState {
-                        attempt: 0,
-                        next_try: tokio::time::Instant::now(),
-                    });
-                }
-                spawn_connect(addr, config, cookie, state, connector);
+                let config = Arc::clone(config);
+                let cookie = Arc::clone(cookie);
+                let state = Arc::clone(state);
+                let connector = connector.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        peer::connect_to_peer(addr, config, cookie, state, connector).await
+                    {
+                        warn!(addr = %addr, error = %e, "failed to connect to peer");
+                    }
+                });
             }
             Err(e) => {
                 warn!(addr = %addr_str, error = %e, "invalid peer address");
@@ -231,56 +211,7 @@ async fn process_tick(
             st.peers.remove(key);
             info!(node_id = %key, "peer removed via leave command");
         }
-        // Remove from known_peers so we don't reconnect
-        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-            st.known_peers.remove(&addr);
-        }
     }
-
-    // Reconnect to known peers
-    for addr in reconnects {
-        // Update backoff before attempting
-        {
-            let mut st = state.lock().await;
-            if let Some(rs) = st.known_peers.get_mut(&addr) {
-                rs.attempt += 1;
-                let delay = std::cmp::min(
-                    config.reconnect_base_secs * 2u64.saturating_pow(rs.attempt),
-                    config.reconnect_max_secs,
-                );
-                rs.next_try = tokio::time::Instant::now() + Duration::from_secs(delay);
-            }
-        }
-        spawn_connect(addr, config, cookie, state, &connector.clone());
-    }
-}
-
-fn spawn_connect(
-    addr: SocketAddr,
-    config: &Arc<Config>,
-    cookie: &Arc<Vec<u8>>,
-    state: &Arc<Mutex<DaemonState>>,
-    connector: &tokio_rustls::TlsConnector,
-) {
-    let config = Arc::clone(config);
-    let cookie = Arc::clone(cookie);
-    let state = Arc::clone(state);
-    let connector = connector.clone();
-    tokio::spawn(async move {
-        match peer::connect_to_peer(addr, config, cookie, Arc::clone(&state), connector).await {
-            Ok(_) => {
-                // Reset backoff on success
-                let mut st = state.lock().await;
-                if let Some(rs) = st.known_peers.get_mut(&addr) {
-                    rs.attempt = 0;
-                    rs.next_try = tokio::time::Instant::now();
-                }
-            }
-            Err(e) => {
-                warn!(addr = %addr, error = %e, "failed to connect to peer");
-            }
-        }
-    });
 }
 
 /// Broadcast membership change events to subscribers.
