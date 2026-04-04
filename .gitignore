@@ -1,0 +1,13 @@
+/target
+Cargo.lock
+*.swp
+*.swo
+*~
+.DS_Store
+
+# PMD runtime files (never commit)
+*.pid
+*.sock
+
+# TLS certs (generated per-node)
+.pmd/
