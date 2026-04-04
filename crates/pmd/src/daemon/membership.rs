@@ -192,3 +192,195 @@ impl Membership {
         changes
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::MembershipEvent;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn test_add_node_appears_in_members() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+
+        let members = m.members();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].node_id, "node-a");
+        assert_eq!(members[0].addr, addr("127.0.0.1:4369"));
+    }
+
+    #[test]
+    fn test_remove_node_disappears_from_members() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        assert_eq!(m.members().len(), 1);
+
+        m.remove_node("node-a");
+        assert_eq!(m.members().len(), 0);
+    }
+
+    #[test]
+    fn test_add_multiple_nodes() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+
+        let members = m.members();
+        assert_eq!(members.len(), 2);
+        let ids: Vec<&str> = members.iter().map(|n| n.node_id.as_str()).collect();
+        assert!(ids.contains(&"node-a"));
+        assert!(ids.contains(&"node-b"));
+    }
+
+    #[test]
+    fn test_merge_convergence_two_replicas() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+
+        m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+
+        // Sync m1 → m2
+        let delta1 = m1.full_delta();
+        m2.merge_remote(&delta1).unwrap();
+
+        // Sync m2 → m1
+        let delta2 = m2.full_delta();
+        m1.merge_remote(&delta2).unwrap();
+
+        // Both should see 2 nodes
+        assert_eq!(m1.members().len(), 2);
+        assert_eq!(m2.members().len(), 2);
+    }
+
+    #[test]
+    fn test_merge_convergence_three_replicas_chain() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+        let mut m3 = Membership::new("node-c");
+
+        m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+        m3.add_node("node-c", addr("127.0.0.1:4371"), HashMap::new());
+
+        // Chain: m1 → m2 → m3 → m1
+        let d1 = m1.full_delta();
+        m2.merge_remote(&d1).unwrap();
+
+        let d2 = m2.full_delta();
+        m3.merge_remote(&d2).unwrap();
+
+        let d3 = m3.full_delta();
+        m1.merge_remote(&d3).unwrap();
+
+        // Final sync pass so everyone converges
+        let d1 = m1.full_delta();
+        let d2 = m2.full_delta();
+        let d3 = m3.full_delta();
+        m1.merge_remote(&d2).unwrap();
+        m1.merge_remote(&d3).unwrap();
+        m2.merge_remote(&d1).unwrap();
+        m2.merge_remote(&d3).unwrap();
+        m3.merge_remote(&d1).unwrap();
+        m3.merge_remote(&d2).unwrap();
+
+        assert_eq!(m1.members().len(), 3);
+        assert_eq!(m2.members().len(), 3);
+        assert_eq!(m3.members().len(), 3);
+    }
+
+    #[test]
+    fn test_merge_remote_detects_join() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+
+        m2.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+
+        let delta = m2.full_delta();
+        let changes = m1.merge_remote(&delta).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].event, MembershipEvent::NodeJoined);
+        assert_eq!(changes[0].node_id, "node-b");
+    }
+
+    #[test]
+    fn test_merge_remote_detects_leave() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+
+        // Both know about node-c
+        m1.add_node("node-c", addr("127.0.0.1:4371"), HashMap::new());
+        let delta = m1.full_delta();
+        m2.merge_remote(&delta).unwrap();
+
+        // m1 removes node-c
+        m1.remove_node("node-c");
+
+        // Sync the removal
+        let delta = m1.full_delta();
+        let changes = m2.merge_remote(&delta).unwrap();
+
+        // node-c should be gone
+        let has_leave = changes.iter().any(|c| {
+            c.event == MembershipEvent::NodeLeft && c.node_id == "node-c"
+        });
+        assert!(has_leave, "expected NodeLeft for node-c, got {changes:?}");
+    }
+
+    #[test]
+    fn test_delta_for_peer_produces_delta() {
+        let mut m = Membership::new("node-a");
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+
+        let empty_vv = VersionVector::new();
+        let delta_bytes = m.delta_for_peer(&empty_vv);
+        assert!(!delta_bytes.is_empty());
+    }
+
+    #[test]
+    fn test_idempotent_merge() {
+        let mut m1 = Membership::new("node-a");
+        let mut m2 = Membership::new("node-b");
+
+        m1.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        let delta = m1.full_delta();
+
+        // Apply same delta twice
+        let changes1 = m2.merge_remote(&delta).unwrap();
+        let changes2 = m2.merge_remote(&delta).unwrap();
+
+        // First merge detects join, second should detect nothing new
+        assert_eq!(changes1.len(), 1);
+        assert_eq!(changes2.len(), 0);
+        assert_eq!(m2.members().len(), 1);
+    }
+
+    #[test]
+    fn test_version_vector_advances() {
+        let mut m = Membership::new("node-a");
+        let vv_before = m.version_vector().clone();
+
+        m.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        let vv_after = m.version_vector().clone();
+
+        // VV should have advanced
+        assert_ne!(format!("{vv_before:?}"), format!("{vv_after:?}"));
+    }
+
+    #[test]
+    fn test_node_id_accessor() {
+        let m = Membership::new("my-node");
+        assert_eq!(m.node_id(), "my-node");
+    }
+
+    #[test]
+    fn test_empty_membership_has_no_members() {
+        let m = Membership::new("node-a");
+        assert!(m.members().is_empty());
+    }
+}

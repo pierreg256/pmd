@@ -122,3 +122,176 @@ pub async fn send_control_request(
     let response: ControlResponse = serde_json::from_str(line.trim())?;
     Ok(response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    use tokio_util::sync::CancellationToken;
+
+    use crate::daemon::DaemonState;
+    use crate::daemon::membership::Membership;
+    use crate::protocol::{ControlRequest, ControlResponse};
+
+    fn make_test_state() -> Arc<Mutex<DaemonState>> {
+        let mut membership = Membership::new("test-node");
+        membership.add_node(
+            "test-node",
+            "127.0.0.1:4369".parse().unwrap(),
+            HashMap::new(),
+        );
+        Arc::new(Mutex::new(DaemonState {
+            membership,
+            listen_addr: "127.0.0.1:4369".parse().unwrap(),
+            peers: HashMap::new(),
+            pending_joins: Vec::new(),
+            pending_leaves: Vec::new(),
+            shutdown: CancellationToken::new(),
+        }))
+    }
+
+    fn temp_socket_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("pmd-test-{}-{}.sock", std::process::id(), rand::random::<u32>()))
+    }
+
+    #[tokio::test]
+    async fn test_control_status() {
+        let socket_path = temp_socket_path();
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let state = make_test_state();
+
+        let server_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let _ = run_control_socket(listener, server_state).await;
+        });
+
+        // Give server a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = send_control_request(&socket_path, &ControlRequest::Status)
+            .await
+            .unwrap();
+        match resp {
+            ControlResponse::Status { node_id, peer_count, node_count, .. } => {
+                assert_eq!(node_id, "test-node");
+                assert_eq!(peer_count, 0);
+                assert_eq!(node_count, 1);
+            }
+            other => panic!("expected Status, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[tokio::test]
+    async fn test_control_nodes() {
+        let socket_path = temp_socket_path();
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let state = make_test_state();
+
+        let server_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let _ = run_control_socket(listener, server_state).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = send_control_request(&socket_path, &ControlRequest::Nodes)
+            .await
+            .unwrap();
+        match resp {
+            ControlResponse::Nodes { nodes } => {
+                assert_eq!(nodes.len(), 1);
+                assert_eq!(nodes[0].node_id, "test-node");
+            }
+            other => panic!("expected Nodes, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[tokio::test]
+    async fn test_control_join_queues_address() {
+        let socket_path = temp_socket_path();
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let state = make_test_state();
+
+        let server_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let _ = run_control_socket(listener, server_state).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = send_control_request(
+            &socket_path,
+            &ControlRequest::Join { addr: "10.0.0.1:4369".into() },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(resp, ControlResponse::Ok));
+
+        let st = state.lock().await;
+        assert_eq!(st.pending_joins, vec!["10.0.0.1:4369".to_string()]);
+
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[tokio::test]
+    async fn test_control_leave_queues_address() {
+        let socket_path = temp_socket_path();
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let state = make_test_state();
+
+        let server_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let _ = run_control_socket(listener, server_state).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = send_control_request(
+            &socket_path,
+            &ControlRequest::Leave { addr: "10.0.0.1:4369".into() },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(resp, ControlResponse::Ok));
+
+        let st = state.lock().await;
+        assert_eq!(st.pending_leaves, vec!["10.0.0.1:4369".to_string()]);
+
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[tokio::test]
+    async fn test_control_shutdown_cancels_token() {
+        let socket_path = temp_socket_path();
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let state = make_test_state();
+
+        let shutdown = state.lock().await.shutdown.clone();
+        assert!(!shutdown.is_cancelled());
+
+        let server_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let _ = run_control_socket(listener, server_state).await;
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = send_control_request(&socket_path, &ControlRequest::Shutdown)
+            .await
+            .unwrap();
+        assert!(matches!(resp, ControlResponse::Ok));
+        assert!(shutdown.is_cancelled());
+
+        let _ = std::fs::remove_file(&socket_path);
+    }
+}

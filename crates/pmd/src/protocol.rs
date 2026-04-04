@@ -157,3 +157,270 @@ pub fn verify_cookie_hmac(cookie: &[u8], nonce: &[u8; 32], expected: &[u8]) -> b
     mac.update(nonce);
     mac.verify_slice(expected).is_ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use concordat::vv::VersionVector;
+
+    // -----------------------------------------------------------------------
+    // Roundtrip serialize/deserialize for every Message variant
+    // -----------------------------------------------------------------------
+
+    fn roundtrip(msg: &Message) -> Message {
+        let bytes = bincode::serialize(msg).expect("serialize");
+        bincode::deserialize(&bytes).expect("deserialize")
+    }
+
+    #[test]
+    fn test_message_roundtrip_handshake() {
+        let msg = Message::Handshake {
+            node_id: "node-1".into(),
+            listen_addr: "127.0.0.1:4369".parse().unwrap(),
+            nonce: [42u8; 32],
+            cookie_hmac: vec![1, 2, 3],
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::Handshake { node_id, listen_addr, nonce, cookie_hmac } => {
+                assert_eq!(node_id, "node-1");
+                assert_eq!(listen_addr, "127.0.0.1:4369".parse::<SocketAddr>().unwrap());
+                assert_eq!(nonce, [42u8; 32]);
+                assert_eq!(cookie_hmac, vec![1, 2, 3]);
+            }
+            other => panic!("expected Handshake, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_handshake_ack() {
+        let msg = Message::HandshakeAck {
+            node_id: "node-2".into(),
+            listen_addr: "10.0.0.1:4369".parse().unwrap(),
+            nonce: [7u8; 32],
+            cookie_hmac: vec![9, 8, 7],
+            vv: VersionVector::new(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::HandshakeAck { node_id, nonce, vv, .. } => {
+                assert_eq!(node_id, "node-2");
+                assert_eq!(nonce, [7u8; 32]);
+                assert!(vv.is_empty());
+            }
+            other => panic!("expected HandshakeAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_membership_sync() {
+        let msg = Message::MembershipSync {
+            delta_bytes: vec![0xDE, 0xAD],
+            sender_vv: VersionVector::new(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::MembershipSync { delta_bytes, .. } => {
+                assert_eq!(delta_bytes, vec![0xDE, 0xAD]);
+            }
+            other => panic!("expected MembershipSync, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_notification() {
+        let msg = Message::Notification {
+            event: MembershipEvent::NodeJoined,
+            node_id: "n1".into(),
+            addr: "1.2.3.4:5".into(),
+        };
+        let decoded = roundtrip(&msg);
+        match decoded {
+            Message::Notification { event, node_id, addr } => {
+                assert_eq!(event, MembershipEvent::NodeJoined);
+                assert_eq!(node_id, "n1");
+                assert_eq!(addr, "1.2.3.4:5");
+            }
+            other => panic!("expected Notification, got {other:?}"),
+        }
+
+        // Also test NodeLeft
+        let msg2 = Message::Notification {
+            event: MembershipEvent::NodeLeft,
+            node_id: "n2".into(),
+            addr: "5.6.7.8:9".into(),
+        };
+        match roundtrip(&msg2) {
+            Message::Notification { event, .. } => assert_eq!(event, MembershipEvent::NodeLeft),
+            other => panic!("expected Notification, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_heartbeat() {
+        match roundtrip(&Message::Heartbeat) {
+            Message::Heartbeat => {}
+            other => panic!("expected Heartbeat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_heartbeat_ack() {
+        match roundtrip(&Message::HeartbeatAck) {
+            Message::HeartbeatAck => {}
+            other => panic!("expected HeartbeatAck, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Frame encode/decode
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_frame_roundtrip() {
+        let msg = Message::Heartbeat;
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &msg).await.unwrap();
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let decoded = read_frame(&mut cursor).await.unwrap();
+        assert!(matches!(decoded, Some(Message::Heartbeat)));
+    }
+
+    #[tokio::test]
+    async fn test_frame_roundtrip_complex_message() {
+        let msg = Message::Handshake {
+            node_id: "test-node".into(),
+            listen_addr: "127.0.0.1:4369".parse().unwrap(),
+            nonce: [99u8; 32],
+            cookie_hmac: vec![1, 2, 3, 4, 5],
+        };
+        let mut buf = Vec::new();
+        write_frame(&mut buf, &msg).await.unwrap();
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let decoded = read_frame(&mut cursor).await.unwrap().unwrap();
+        match decoded {
+            Message::Handshake { node_id, .. } => assert_eq!(node_id, "test-node"),
+            other => panic!("expected Handshake, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_frame_eof_returns_none() {
+        let mut cursor = std::io::Cursor::new(Vec::<u8>::new());
+        let result = read_frame(&mut cursor).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_frame_oversized_rejected() {
+        // Craft a length header claiming 20 MiB
+        let len: u32 = 20 * 1024 * 1024;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&len.to_be_bytes());
+        buf.extend_from_slice(&[0u8; 64]); // some payload bytes
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let result = read_frame(&mut cursor).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("frame too large"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Cookie HMAC
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_hmac_valid_cookie() {
+        let cookie = b"my-secret-cookie";
+        let nonce = [1u8; 32];
+        let hmac = compute_cookie_hmac(cookie, &nonce);
+        assert!(verify_cookie_hmac(cookie, &nonce, &hmac));
+    }
+
+    #[test]
+    fn test_hmac_invalid_cookie() {
+        let cookie = b"my-secret-cookie";
+        let wrong_cookie = b"wrong-cookie";
+        let nonce = [2u8; 32];
+        let hmac = compute_cookie_hmac(cookie, &nonce);
+        assert!(!verify_cookie_hmac(wrong_cookie, &nonce, &hmac));
+    }
+
+    #[test]
+    fn test_hmac_wrong_nonce() {
+        let cookie = b"my-secret-cookie";
+        let nonce = [3u8; 32];
+        let other_nonce = [4u8; 32];
+        let hmac = compute_cookie_hmac(cookie, &nonce);
+        assert!(!verify_cookie_hmac(cookie, &other_nonce, &hmac));
+    }
+
+    #[test]
+    fn test_hmac_empty_cookie() {
+        let cookie = b"";
+        let nonce = [5u8; 32];
+        let hmac = compute_cookie_hmac(cookie, &nonce);
+        // Empty cookie still produces a valid HMAC — but wrong cookie won't match
+        assert!(verify_cookie_hmac(cookie, &nonce, &hmac));
+        assert!(!verify_cookie_hmac(b"other", &nonce, &hmac));
+    }
+
+    #[test]
+    fn test_hmac_tampered_hmac() {
+        let cookie = b"my-secret-cookie";
+        let nonce = [6u8; 32];
+        let mut hmac = compute_cookie_hmac(cookie, &nonce);
+        // Flip a bit
+        hmac[0] ^= 0xFF;
+        assert!(!verify_cookie_hmac(cookie, &nonce, &hmac));
+    }
+
+    // -----------------------------------------------------------------------
+    // Control protocol JSON roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_control_request_json_roundtrip() {
+        let requests = vec![
+            ControlRequest::Status,
+            ControlRequest::Nodes,
+            ControlRequest::Join { addr: "1.2.3.4:5".into() },
+            ControlRequest::Leave { addr: "5.6.7.8:9".into() },
+            ControlRequest::Shutdown,
+        ];
+        for req in &requests {
+            let json = serde_json::to_string(req).unwrap();
+            let decoded: ControlRequest = serde_json::from_str(&json).unwrap();
+            assert_eq!(format!("{decoded:?}"), format!("{req:?}"));
+        }
+    }
+
+    #[test]
+    fn test_control_response_json_roundtrip() {
+        let responses = vec![
+            ControlResponse::Ok,
+            ControlResponse::Error { message: "something failed".into() },
+            ControlResponse::Status {
+                node_id: "n1".into(),
+                listen_addr: "0.0.0.0:4369".into(),
+                peer_count: 2,
+                node_count: 3,
+            },
+            ControlResponse::Nodes {
+                nodes: vec![NodeInfoResponse {
+                    node_id: "n1".into(),
+                    addr: "1.2.3.4:4369".into(),
+                    joined_at: 123456,
+                }],
+            },
+        ];
+        for resp in &responses {
+            let json = serde_json::to_string(resp).unwrap();
+            let decoded: ControlResponse = serde_json::from_str(&json).unwrap();
+            assert_eq!(format!("{decoded:?}"), format!("{resp:?}"));
+        }
+    }
+}

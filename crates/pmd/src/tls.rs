@@ -135,3 +135,117 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
             .supported_schemes()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn test_config() -> Config {
+        // Install rustls crypto provider for tests
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let tmpdir = std::env::temp_dir().join(format!(
+            "pmd-tls-test-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(tmpdir.join("tls")).unwrap();
+        Config {
+            port: 4369,
+            bind: "127.0.0.1".into(),
+            home_dir: tmpdir.clone(),
+            socket_path: tmpdir.join("pmd.sock"),
+            pid_path: tmpdir.join("pmd.pid"),
+            cert_path: tmpdir.join("tls/cert.pem"),
+            key_path: tmpdir.join("tls/key.pem"),
+            cookie_path: tmpdir.join("cookie"),
+            sync_interval_secs: 5,
+            heartbeat_interval_secs: 10,
+            heartbeat_timeout_secs: 30,
+        }
+    }
+
+    #[test]
+    fn test_generate_self_signed_cert_creates_files() {
+        let config = test_config();
+        generate_self_signed_cert(&config).unwrap();
+
+        assert!(config.cert_path.exists(), "cert.pem should exist");
+        assert!(config.key_path.exists(), "key.pem should exist");
+
+        let cert_pem = std::fs::read_to_string(&config.cert_path).unwrap();
+        let key_pem = std::fs::read_to_string(&config.key_path).unwrap();
+        assert!(cert_pem.contains("BEGIN CERTIFICATE"));
+        assert!(key_pem.contains("BEGIN PRIVATE KEY"));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&config.home_dir);
+    }
+
+    #[test]
+    fn test_build_acceptor_succeeds() {
+        let config = test_config();
+        let acceptor = build_acceptor(&config);
+        assert!(acceptor.is_ok(), "build_acceptor should succeed: {:?}", acceptor.err());
+
+        let _ = std::fs::remove_dir_all(&config.home_dir);
+    }
+
+    #[test]
+    fn test_build_connector_succeeds() {
+        let config = test_config();
+        let connector = build_connector(&config);
+        assert!(connector.is_ok(), "build_connector should succeed: {:?}", connector.err());
+
+        let _ = std::fs::remove_dir_all(&config.home_dir);
+    }
+
+    #[tokio::test]
+    async fn test_tls_handshake_succeeds() {
+        let config = test_config();
+        let acceptor = build_acceptor(&config).unwrap();
+        let connector = build_connector(&config).unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _tls = acceptor.accept(stream).await.unwrap();
+        });
+
+        let client = tokio::spawn(async move {
+            let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let server_name = rustls::pki_types::ServerName::try_from("pmd-node").unwrap();
+            let _tls = connector.connect(server_name, stream).await.unwrap();
+        });
+
+        let timeout = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            async {
+                server.await.unwrap();
+                client.await.unwrap();
+            },
+        )
+        .await;
+        assert!(timeout.is_ok(), "TLS handshake timed out");
+
+        let _ = std::fs::remove_dir_all(&config.home_dir);
+    }
+
+    #[test]
+    fn test_key_file_permissions() {
+        let config = test_config();
+        generate_self_signed_cert(&config).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::metadata(&config.key_path).unwrap().permissions();
+            assert_eq!(perms.mode() & 0o777, 0o600, "key file should be 0600");
+        }
+
+        let _ = std::fs::remove_dir_all(&config.home_dir);
+    }
+}

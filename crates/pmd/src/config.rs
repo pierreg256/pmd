@@ -62,3 +62,59 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default_values() {
+        let config = Config::new(4369, "0.0.0.0".into()).unwrap();
+        assert_eq!(config.port, 4369);
+        assert_eq!(config.bind, "0.0.0.0");
+        assert_eq!(config.sync_interval_secs, 5);
+        assert_eq!(config.heartbeat_interval_secs, 10);
+        assert_eq!(config.heartbeat_timeout_secs, 30);
+    }
+
+    #[test]
+    fn test_config_custom_port() {
+        let config = Config::new(5555, "127.0.0.1".into()).unwrap();
+        assert_eq!(config.port, 5555);
+        assert_eq!(config.bind, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_config_paths_under_home() {
+        let config = Config::new(4369, "0.0.0.0".into()).unwrap();
+        assert!(config.socket_path.ends_with("pmd.sock"));
+        assert!(config.pid_path.ends_with("pmd.pid"));
+        assert!(config.cert_path.ends_with("cert.pem"));
+        assert!(config.key_path.ends_with("key.pem"));
+        assert!(config.cookie_path.ends_with("cookie"));
+    }
+
+    #[test]
+    fn test_config_ensure_dirs() {
+        let tmpdir = std::env::temp_dir().join(format!("pmd-test-{}", std::process::id()));
+        let config = Config {
+            port: 4369,
+            bind: "0.0.0.0".into(),
+            home_dir: tmpdir.clone(),
+            socket_path: tmpdir.join("pmd.sock"),
+            pid_path: tmpdir.join("pmd.pid"),
+            cert_path: tmpdir.join("tls/cert.pem"),
+            key_path: tmpdir.join("tls/key.pem"),
+            cookie_path: tmpdir.join("cookie"),
+            sync_interval_secs: 5,
+            heartbeat_interval_secs: 10,
+            heartbeat_timeout_secs: 30,
+        };
+        config.ensure_dirs().unwrap();
+        assert!(tmpdir.exists());
+        assert!(tmpdir.join("tls").exists());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmpdir);
+    }
+}
