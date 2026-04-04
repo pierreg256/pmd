@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use portmapd_discovery::{DiscoveryContext, DiscoveryPlugin};
 use serde::{Deserialize, Serialize};
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
 use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
@@ -67,8 +68,18 @@ impl DiscoveryPlugin for BroadcastPlugin {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.running.store(true, Ordering::SeqCst);
 
-        let sock = UdpSocket::bind(("0.0.0.0", self.port)).await?;
-        sock.set_broadcast(true)?;
+        // Use socket2 to set SO_REUSEADDR + SO_REUSEPORT before binding,
+        // allowing multiple instances to share the broadcast port.
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        socket.set_reuse_address(true)?;
+        #[cfg(unix)]
+        socket.set_reuse_port(true)?;
+        socket.set_broadcast(true)?;
+        socket.set_nonblocking(true)?;
+        socket.bind(
+            &std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, self.port).into(),
+        )?;
+        let sock = UdpSocket::from_std(socket.into())?;
 
         let beacon = Beacon {
             node_id: ctx.local_node.node_id.clone(),
