@@ -77,21 +77,27 @@ where
 
     info!(node_id = %remote_node_id, addr = %remote_addr, "inbound peer authenticated");
 
-    // 2. Atomically check for duplicate AND register the peer BEFORE replying.
-    //    If we reply first and then reject, the outbound side thinks it succeeded
-    //    and enters the message loop on a connection that's about to close.
+    // Tie-breaker: for a pair (A, B), only the connection initiated by
+    // the node with the HIGHER node_id survives. This is an inbound
+    // connection (the remote initiated it), so it survives only if
+    // remote_node_id > our_node_id.
     let (our_nonce, our_hmac, vv, our_node_id, listen_addr) = {
         let mut st = state.lock().await;
-        if st.peers.contains_key(&remote_node_id) {
-            info!(node_id = %remote_node_id, "rejecting duplicate inbound connection (pre-ack)");
+        let our_node_id = st.membership.node_id().to_string();
+
+        // If remote id is lower, they should NOT be the initiator — drop this.
+        if remote_node_id < our_node_id && st.peers.contains_key(&remote_node_id) {
+            info!(node_id = %remote_node_id, "rejecting inbound: our outbound wins (tie-breaker)");
             return Ok(());
         }
+
+        // If duplicate exists and this direction should win, REPLACE it.
+        // The old task will detect the dead stream and exit.
 
         let mut nonce = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut nonce);
         let hmac = compute_cookie_hmac(&cookie, &nonce);
         let vv = st.membership.version_vector().clone();
-        let our_node_id = st.membership.node_id().to_string();
         let listen_addr: SocketAddr = format!("{}:{}", config.bind, config.port).parse()?;
 
         st.peers.insert(
@@ -218,13 +224,19 @@ pub async fn connect_to_peer(
 
     info!(node_id = %remote_node_id, addr = %remote_addr, "outbound peer authenticated");
 
-    // 3. Atomically check for duplicate AND register peer
+    // Tie-breaker: this is an outbound connection (we initiated it).
+    // It survives only if our_node_id > remote_node_id.
     {
         let mut st = state.lock().await;
-        if st.peers.contains_key(&remote_node_id) {
-            info!(node_id = %remote_node_id, "dropping duplicate outbound connection");
+        let our_node_id = st.membership.node_id().to_string();
+
+        if our_node_id < remote_node_id && st.peers.contains_key(&remote_node_id) {
+            // We lose the tie-break — our inbound from the remote should win.
+            info!(node_id = %remote_node_id, "dropping outbound: their outbound wins (tie-breaker)");
             return Ok(());
         }
+
+        // If duplicate exists and this direction should win, REPLACE it.
         st.peers.insert(
             remote_node_id.clone(),
             PeerHandle {
