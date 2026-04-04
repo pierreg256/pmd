@@ -77,37 +77,23 @@ where
 
     info!(node_id = %remote_node_id, addr = %remote_addr, "inbound peer authenticated");
 
-    // 2. Reply with HandshakeAck
-    let mut our_nonce = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut our_nonce);
-    let our_hmac = compute_cookie_hmac(&cookie, &our_nonce);
-
-    let vv = {
-        let st = state.lock().await;
-        st.membership.version_vector().clone()
-    };
-
-    let listen_addr: SocketAddr = format!("{}:{}", config.bind, config.port).parse()?;
-
-    write_frame(
-        &mut writer,
-        &Message::HandshakeAck {
-            node_id: state.lock().await.membership.node_id().to_string(),
-            listen_addr,
-            nonce: our_nonce,
-            cookie_hmac: our_hmac,
-            vv: vv.clone(),
-        },
-    )
-    .await?;
-
-    // 3. Atomically check for duplicate AND register the peer
-    {
+    // 2. Atomically check for duplicate AND register the peer BEFORE replying.
+    //    If we reply first and then reject, the outbound side thinks it succeeded
+    //    and enters the message loop on a connection that's about to close.
+    let (our_nonce, our_hmac, vv, our_node_id, listen_addr) = {
         let mut st = state.lock().await;
         if st.peers.contains_key(&remote_node_id) {
-            info!(node_id = %remote_node_id, "rejecting duplicate inbound connection");
+            info!(node_id = %remote_node_id, "rejecting duplicate inbound connection (pre-ack)");
             return Ok(());
         }
+
+        let mut nonce = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        let hmac = compute_cookie_hmac(&cookie, &nonce);
+        let vv = st.membership.version_vector().clone();
+        let our_node_id = st.membership.node_id().to_string();
+        let listen_addr: SocketAddr = format!("{}:{}", config.bind, config.port).parse()?;
+
         st.peers.insert(
             remote_node_id.clone(),
             PeerHandle {
@@ -118,7 +104,22 @@ where
                 last_vv: VersionVector::new(),
             },
         );
-    }
+
+        (nonce, hmac, vv, our_node_id, listen_addr)
+    };
+
+    // 3. Now reply — the peer is already registered, so no race window.
+    write_frame(
+        &mut writer,
+        &Message::HandshakeAck {
+            node_id: our_node_id,
+            listen_addr,
+            nonce: our_nonce,
+            cookie_hmac: our_hmac,
+            vv: vv.clone(),
+        },
+    )
+    .await?;
 
     // 4. Send initial full delta
     {
