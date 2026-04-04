@@ -32,6 +32,10 @@ pub struct DaemonState {
 
 /// Run the PMD daemon.
 pub async fn run(config: Config, node_id: String) -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("failed to install rustls crypto provider");
+
     let config = Arc::new(config);
     config.ensure_dirs()?;
 
