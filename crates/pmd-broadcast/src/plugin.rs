@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use pmd_discovery::{DiscoveryContext, DiscoveryPlugin};
+use portmapd_discovery::{DiscoveryContext, DiscoveryPlugin};
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
 use tokio::time::{self, Duration};

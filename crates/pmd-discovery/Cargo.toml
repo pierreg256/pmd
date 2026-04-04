@@ -1,8 +1,12 @@
 [package]
-name = "pmd-discovery"
+name = "portmapd-discovery"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Discovery plugin trait for portmapd — distributed node membership daemon"
+repository = "https://github.com/pierreg256/pmd"
+keywords = ["distributed", "membership", "discovery", "plugin"]
+categories = ["network-programming"]
 
 [dependencies]
 tokio = { version = "1", features = ["sync"] }
