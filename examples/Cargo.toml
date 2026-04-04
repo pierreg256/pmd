@@ -1,0 +1,17 @@
+[package]
+name = "pmd-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[example]]
+name = "broadcast_discovery"
+path = "broadcast_discovery.rs"
+
+[dependencies]
+portmapd-discovery = { path = "../crates/pmd-discovery" }
+portmapd-broadcast = { path = "../crates/pmd-broadcast" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
