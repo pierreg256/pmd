@@ -54,3 +54,9 @@ cargo clippy --workspace -- -D warnings
 - All network I/O goes through `daemon/server.rs` (accept) or `daemon/peer.rs` (per-peer loop)
 - The membership CRDT is the single source of truth — never maintain parallel state
 - Discovery plugins communicate via `tokio::sync::mpsc` channel, never directly open connections
+
+## Workflow
+
+- After completing each step or phase from `PLAN.md`, **commit and push** (`git add -A && git commit -m "<message>" && git push`)
+- Commit messages should reference the phase/step number, e.g. `Phase 2, step 7: TLS setup`
+- Never leave uncommitted work at the end of a phase
