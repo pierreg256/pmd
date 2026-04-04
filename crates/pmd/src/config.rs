@@ -4,6 +4,13 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Detect the first non-loopback IPv4 address, falling back to 127.0.0.1.
+pub fn default_bind_address() -> String {
+    local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
 /// PMD daemon configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -72,7 +79,7 @@ impl Config {
     pub fn from_file_and_args(
         config_path: Option<&str>,
         cli_port: u16,
-        cli_bind: &str,
+        cli_bind: Option<&str>,
         cli_discovery: &[String],
     ) -> Result<(Self, HashMap<String, String>, Vec<String>)> {
         let home_dir = dirs::home_dir()
@@ -97,10 +104,10 @@ impl Config {
         } else {
             cf.port.unwrap_or(cli_port)
         };
-        let bind = if cli_bind != "0.0.0.0" {
-            cli_bind.to_string()
+        let bind = if let Some(b) = cli_bind {
+            b.to_string()
         } else {
-            cf.bind.unwrap_or_else(|| cli_bind.to_string())
+            cf.bind.unwrap_or_else(default_bind_address)
         };
 
         let tls_dir = home_dir.join("tls");

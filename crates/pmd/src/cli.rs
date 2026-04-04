@@ -18,9 +18,9 @@ pub enum Commands {
         #[arg(short, long, default_value_t = 4369)]
         port: u16,
 
-        /// Bind address
-        #[arg(short, long, default_value = "0.0.0.0")]
-        bind: String,
+        /// Bind address (default: auto-detect first non-loopback IPv4)
+        #[arg(short, long)]
+        bind: Option<String>,
 
         /// Run in foreground (don't daemonize)
         #[arg(short, long)]

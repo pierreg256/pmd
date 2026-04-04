@@ -35,8 +35,12 @@ async fn main() -> Result<()> {
                 )
                 .init();
 
-            let (config, metadata, discovery_plugins) =
-                Config::from_file_and_args(config_path.as_deref(), port, &bind, &discovery)?;
+            let (config, metadata, discovery_plugins) = Config::from_file_and_args(
+                config_path.as_deref(),
+                port,
+                bind.as_deref(),
+                &discovery,
+            )?;
             config.ensure_dirs()?;
 
             let node_id = uuid::Uuid::new_v4().to_string();
