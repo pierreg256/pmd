@@ -31,9 +31,10 @@ PMD is an Erlang EPMD-inspired distributed daemon written in Rust. It maintains 
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
+cargo fmt --all -- --check
 ```
 
-**Nothing gets pushed to GitHub without passing all three commands above.** This is a hard gate — no exceptions.
+**Nothing gets pushed to GitHub without passing all four commands above.** This is a hard gate — no exceptions.
 
 ## Testing Policy
 
@@ -75,5 +76,5 @@ cargo clippy --workspace -- -D warnings
 - After completing each step or phase from `PLAN.md`, **commit and push** (`git add -A && git commit -m "<message>" && git push`)
 - Commit messages should reference the phase/step number, e.g. `Phase 2, step 7: TLS setup`
 - Never leave uncommitted work at the end of a phase
-- **Before every push**: run `cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings` — all three must pass with zero failures and zero warnings (dead-code warnings for future phases excepted)
+- **Before every push**: run `cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --all -- --check` — all four must pass with zero failures and zero warnings (dead-code warnings for future phases excepted)
 - **Update `PLAN.md`** after every completed step: mark it with ✅, add a brief note of what was done. This keeps the plan as the single source of truth for project progress
