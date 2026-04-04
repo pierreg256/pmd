@@ -133,9 +133,11 @@ pub async fn run(
     tokio::spawn(async move {
         while let Some(addr) = discovered_rx.recv().await {
             let mut st = discovery_state.lock().await;
-            // Only queue join if not already connected to this address
+            // Skip if already connected or already attempting connection
             let already_connected = st.peers.values().any(|p| p.id.addr == addr);
-            if !already_connected {
+            let already_known = st.known_peers.contains_key(&addr);
+            let already_pending = st.pending_joins.iter().any(|a| a == &addr.to_string());
+            if !already_connected && !already_known && !already_pending {
                 info!(addr = %addr, "discovery: queueing peer connection");
                 st.pending_joins.push(addr.to_string());
             }

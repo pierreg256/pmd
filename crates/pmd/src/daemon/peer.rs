@@ -77,6 +77,15 @@ where
 
     info!(node_id = %remote_node_id, addr = %remote_addr, "inbound peer authenticated");
 
+    // Reject duplicate: if we already have a connection to this node_id
+    {
+        let st = state.lock().await;
+        if st.peers.contains_key(&remote_node_id) {
+            debug!(node_id = %remote_node_id, "rejecting duplicate inbound connection");
+            return Ok(());
+        }
+    }
+
     // 2. Reply with HandshakeAck
     let mut our_nonce = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut our_nonce);
@@ -213,6 +222,15 @@ pub async fn connect_to_peer(
     };
 
     info!(node_id = %remote_node_id, addr = %remote_addr, "outbound peer authenticated");
+
+    // Reject duplicate: if an inbound connection already registered this node_id
+    {
+        let st = state.lock().await;
+        if st.peers.contains_key(&remote_node_id) {
+            debug!(node_id = %remote_node_id, "dropping duplicate outbound connection");
+            return Ok(());
+        }
+    }
 
     // 3. Register peer
     {
