@@ -36,6 +36,9 @@ pub struct ConfigFile {
     pub reconnect_base_secs: Option<u64>,
     pub reconnect_max_secs: Option<u64>,
     pub ca_cert_path: Option<String>,
+    /// Discovery plugins to enable (e.g. ["broadcast"]).
+    #[serde(default)]
+    pub discovery: Vec<String>,
     #[serde(default)]
     pub metadata: HashMap<String, String>,
 }
@@ -70,7 +73,8 @@ impl Config {
         config_path: Option<&str>,
         cli_port: u16,
         cli_bind: &str,
-    ) -> Result<(Self, HashMap<String, String>)> {
+        cli_discovery: &[String],
+    ) -> Result<(Self, HashMap<String, String>, Vec<String>)> {
         let home_dir = dirs::home_dir()
             .context("cannot determine home directory")?
             .join(".pmd");
@@ -118,9 +122,15 @@ impl Config {
             home_dir,
         };
 
-        Ok((config, cf.metadata))
-    }
+        // CLI discovery flags override config file
+        let discovery = if cli_discovery.is_empty() {
+            cf.discovery
+        } else {
+            cli_discovery.to_vec()
+        };
 
+        Ok((config, cf.metadata, discovery))
+    }
     /// Ensure the home and TLS directories exist.
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(&self.home_dir).context("failed to create ~/.pmd")?;
@@ -210,6 +220,7 @@ port = 5000
 bind = "10.0.0.1"
 sync_interval_secs = 10
 ca_cert_path = "/etc/pmd/ca.pem"
+discovery = ["broadcast"]
 
 [metadata]
 role = "worker"
@@ -220,6 +231,7 @@ region = "us-east-1"
         assert_eq!(cf.bind.as_deref(), Some("10.0.0.1"));
         assert_eq!(cf.sync_interval_secs, Some(10));
         assert_eq!(cf.ca_cert_path.as_deref(), Some("/etc/pmd/ca.pem"));
+        assert_eq!(cf.discovery, vec!["broadcast"]);
         assert_eq!(cf.metadata.get("role").unwrap(), "worker");
         assert_eq!(cf.metadata.get("region").unwrap(), "us-east-1");
     }
@@ -228,6 +240,7 @@ region = "us-east-1"
     fn test_config_file_defaults() {
         let cf: ConfigFile = toml::from_str("").unwrap();
         assert!(cf.port.is_none());
+        assert!(cf.discovery.is_empty());
         assert!(cf.bind.is_none());
         assert!(cf.metadata.is_empty());
     }

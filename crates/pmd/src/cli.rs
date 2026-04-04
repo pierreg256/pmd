@@ -29,6 +29,10 @@ pub enum Commands {
         /// Path to config file
         #[arg(short, long)]
         config: Option<String>,
+
+        /// Discovery plugins to enable (e.g. "broadcast")
+        #[arg(short, long)]
+        discovery: Vec<String>,
     },
 
     /// Stop the running PMD daemon

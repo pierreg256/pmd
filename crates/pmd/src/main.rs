@@ -26,6 +26,7 @@ async fn main() -> Result<()> {
             bind,
             foreground,
             config: config_path,
+            discovery,
         } => {
             tracing_subscriber::fmt()
                 .with_env_filter(
@@ -34,14 +35,14 @@ async fn main() -> Result<()> {
                 )
                 .init();
 
-            let (config, metadata) =
-                Config::from_file_and_args(config_path.as_deref(), port, &bind)?;
+            let (config, metadata, discovery_plugins) =
+                Config::from_file_and_args(config_path.as_deref(), port, &bind, &discovery)?;
             config.ensure_dirs()?;
 
             let node_id = uuid::Uuid::new_v4().to_string();
 
             if foreground {
-                daemon::run(config, node_id, metadata).await?;
+                daemon::run(config, node_id, metadata, discovery_plugins).await?;
             } else {
                 let daemonize = daemonize::Daemonize::new()
                     .pid_file(&config.pid_path)
@@ -52,7 +53,7 @@ async fn main() -> Result<()> {
                         tracing_subscriber::fmt()
                             .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
                             .init();
-                        daemon::run(config, node_id, metadata).await?;
+                        daemon::run(config, node_id, metadata, discovery_plugins).await?;
                     }
                     Err(e) => {
                         error!(error = %e, "failed to daemonize");

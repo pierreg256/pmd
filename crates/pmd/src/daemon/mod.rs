@@ -42,7 +42,12 @@ pub struct ReconnectState {
 }
 
 /// Run the PMD daemon.
-pub async fn run(config: Config, node_id: String, metadata: HashMap<String, String>) -> Result<()> {
+pub async fn run(
+    config: Config,
+    node_id: String,
+    metadata: HashMap<String, String>,
+    discovery_plugins: Vec<String>,
+) -> Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("failed to install rustls crypto provider");
@@ -110,6 +115,30 @@ pub async fn run(config: Config, node_id: String, metadata: HashMap<String, Stri
         .await
         {
             error!(error = %e, "server error");
+        }
+    });
+
+    // Spawn discovery plugins and a task to process discovered peers
+    let (discovered_tx, mut discovered_rx) = tokio::sync::mpsc::channel::<SocketAddr>(64);
+    start_discovery_plugins(
+        &discovery_plugins,
+        &node_id,
+        actual_addr,
+        discovered_tx,
+        shutdown.clone(),
+    );
+
+    // Task: forward discovered peers into pending_joins
+    let discovery_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        while let Some(addr) = discovered_rx.recv().await {
+            let mut st = discovery_state.lock().await;
+            // Only queue join if not already connected to this address
+            let already_connected = st.peers.values().any(|p| p.id.addr == addr);
+            if !already_connected {
+                info!(addr = %addr, "discovery: queueing peer connection");
+                st.pending_joins.push(addr.to_string());
+            }
         }
     });
 
@@ -282,5 +311,50 @@ fn load_or_generate_cookie(config: &Config) -> Result<Vec<u8>> {
 
         info!(path = %config.cookie_path.display(), "generated new cookie");
         Ok(cookie)
+    }
+}
+
+/// Instantiate and start discovery plugins based on their names.
+fn start_discovery_plugins(
+    plugins: &[String],
+    node_id: &str,
+    listen_addr: SocketAddr,
+    discovered_tx: tokio::sync::mpsc::Sender<SocketAddr>,
+    shutdown: CancellationToken,
+) {
+    use portmapd_discovery::{DiscoveryContext, DiscoveryPlugin, NodeInfo};
+
+    for name in plugins {
+        match name.as_str() {
+            "broadcast" => {
+                let plugin = portmapd_broadcast::BroadcastPlugin::new();
+                let ctx = DiscoveryContext {
+                    local_node: NodeInfo {
+                        node_id: node_id.to_string(),
+                        addr: listen_addr,
+                    },
+                    discovered_tx: discovered_tx.clone(),
+                };
+                let plugin_name = plugin.name().to_string();
+                let shutdown = shutdown.clone();
+                info!(plugin = %plugin_name, "starting discovery plugin");
+                tokio::spawn(async move {
+                    tokio::select! {
+                        result = plugin.start(ctx) => {
+                            if let Err(e) = result {
+                                error!(plugin = %plugin_name, error = %e, "discovery plugin error");
+                            }
+                        }
+                        _ = shutdown.cancelled() => {
+                            let _ = plugin.stop().await;
+                            info!(plugin = %plugin_name, "discovery plugin stopped");
+                        }
+                    }
+                });
+            }
+            other => {
+                warn!(plugin = %other, "unknown discovery plugin, skipping");
+            }
+        }
     }
 }
