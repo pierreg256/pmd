@@ -76,3 +76,4 @@ cargo clippy --workspace -- -D warnings
 - Commit messages should reference the phase/step number, e.g. `Phase 2, step 7: TLS setup`
 - Never leave uncommitted work at the end of a phase
 - **Before every push**: run `cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings` — all three must pass with zero failures and zero warnings (dead-code warnings for future phases excepted)
+- **Update `PLAN.md`** after every completed step: mark it with ✅, add a brief note of what was done. This keeps the plan as the single source of truth for project progress
