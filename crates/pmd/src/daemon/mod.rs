@@ -1,4 +1,5 @@
 pub mod control;
+pub mod failure_detector;
 pub mod membership;
 pub mod peer;
 pub mod server;
@@ -10,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::net::{TcpListener, UnixListener};
 use tokio::signal;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -133,8 +134,9 @@ pub async fn run(
         }
     });
 
-    // Main loop: process pending joins/leaves
+    // Main loop: process pending joins/leaves + gossip tick
     let mut tick = time::interval(Duration::from_millis(500));
+    let mut gossip_tick = time::interval(Duration::from_secs(config.sync_interval_secs));
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
@@ -148,6 +150,9 @@ pub async fn run(
             }
             _ = tick.tick() => {
                 process_tick(&config, &cookie, &state, &connector).await;
+            }
+            _ = gossip_tick.tick() => {
+                gossip_sync_random_peer(&state).await;
             }
         }
     }
@@ -218,6 +223,26 @@ async fn process_tick(
 pub fn broadcast_events(state: &DaemonState, changes: &[MembershipChange]) {
     for change in changes {
         let _ = state.event_tx.send(change.clone());
+    }
+}
+
+/// Gossip: pick one random connected peer and signal it to perform a delta sync.
+async fn gossip_sync_random_peer(state: &Arc<Mutex<DaemonState>>) {
+    use rand::seq::SliceRandom;
+
+    let st = state.lock().await;
+    let peer_ids: Vec<String> = st.peers.keys().cloned().collect();
+    if peer_ids.is_empty() {
+        return;
+    }
+    let chosen = peer_ids.choose(&mut rand::thread_rng());
+    if let Some(id) = chosen
+        && let Some(peer) = st.peers.get(id)
+    {
+        let tx = peer.gossip_tx.clone();
+        drop(st);
+        // Non-blocking send — if the channel is full, skip this tick.
+        let _ = tx.try_send(());
     }
 }
 

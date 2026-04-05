@@ -12,7 +12,10 @@ use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::daemon::DaemonState;
-use crate::protocol::{Message, compute_cookie_hmac, read_frame, verify_cookie_hmac, write_frame};
+use crate::daemon::failure_detector::PhiAccrualDetector;
+use crate::protocol::{
+    Message, PROTOCOL_VERSION, compute_cookie_hmac, read_frame, verify_cookie_hmac, write_frame,
+};
 
 /// Unique identifier for a connected peer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -25,6 +28,10 @@ pub struct PeerId {
 pub struct PeerHandle {
     pub id: PeerId,
     pub last_vv: VersionVector,
+    /// Phi accrual failure detector for this peer.
+    pub phi_detector: PhiAccrualDetector,
+    /// Channel to signal this peer's loop to perform a gossip sync.
+    pub gossip_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +73,14 @@ where
             listen_addr,
             nonce,
             cookie_hmac,
+            protocol_version,
+            ..
         } => {
+            if protocol_version != PROTOCOL_VERSION {
+                bail!(
+                    "protocol version mismatch: remote={protocol_version}, local={PROTOCOL_VERSION}"
+                );
+            }
             if !verify_cookie_hmac(&cookie, &nonce, &cookie_hmac) {
                 bail!("invalid cookie HMAC from {node_id}");
             }
@@ -78,7 +92,7 @@ where
     info!(node_id = %remote_node_id, addr = %remote_addr, "inbound peer authenticated");
 
     // Check + register atomically. If already connected, reject.
-    let (our_nonce, our_hmac, vv, our_node_id, listen_addr) = {
+    let (our_nonce, our_hmac, vv, our_node_id, listen_addr, mut gossip_rx) = {
         let mut st = state.lock().await;
         if st.peers.contains_key(&remote_node_id) {
             info!(node_id = %remote_node_id, "rejecting duplicate inbound connection");
@@ -92,6 +106,7 @@ where
         let our_node_id = st.membership.node_id().to_string();
         let listen_addr: SocketAddr = format!("{}:{}", config.bind, config.port).parse()?;
 
+        let (gossip_tx, gossip_rx) = tokio::sync::mpsc::channel(1);
         st.peers.insert(
             remote_node_id.clone(),
             PeerHandle {
@@ -100,10 +115,15 @@ where
                     addr: remote_addr,
                 },
                 last_vv: VersionVector::new(),
+                phi_detector: PhiAccrualDetector::new(
+                    config.phi_window_size,
+                    config.phi_min_std_deviation_ms,
+                ),
+                gossip_tx,
             },
         );
 
-        (nonce, hmac, vv, our_node_id, listen_addr)
+        (nonce, hmac, vv, our_node_id, listen_addr, gossip_rx)
     };
 
     // Reply with HandshakeAck (peer is already registered, no race window)
@@ -115,6 +135,8 @@ where
             nonce: our_nonce,
             cookie_hmac: our_hmac,
             vv: vv.clone(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version: PROTOCOL_VERSION,
         },
     )
     .await?;
@@ -143,6 +165,7 @@ where
         &config,
         &cookie,
         &state,
+        &mut gossip_rx,
     )
     .await;
 
@@ -189,6 +212,8 @@ pub async fn connect_to_peer(
             listen_addr,
             nonce,
             cookie_hmac: hmac,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version: PROTOCOL_VERSION,
         },
     )
     .await?;
@@ -205,7 +230,14 @@ pub async fn connect_to_peer(
             nonce: remote_nonce,
             cookie_hmac: remote_hmac,
             vv,
+            protocol_version,
+            ..
         } => {
+            if protocol_version != PROTOCOL_VERSION {
+                bail!(
+                    "protocol version mismatch: remote={protocol_version}, local={PROTOCOL_VERSION}"
+                );
+            }
             if !verify_cookie_hmac(&cookie, &remote_nonce, &remote_hmac) {
                 bail!("invalid cookie HMAC from {node_id}");
             }
@@ -217,12 +249,13 @@ pub async fn connect_to_peer(
     info!(node_id = %remote_node_id, addr = %remote_addr, "outbound peer authenticated");
 
     // Check + register atomically. If already connected (e.g. inbound won), drop.
-    {
+    let mut gossip_rx = {
         let mut st = state.lock().await;
         if st.peers.contains_key(&remote_node_id) {
             info!(node_id = %remote_node_id, "dropping duplicate outbound connection");
             return Ok(());
         }
+        let (gossip_tx, gossip_rx) = tokio::sync::mpsc::channel(1);
         st.peers.insert(
             remote_node_id.clone(),
             PeerHandle {
@@ -231,9 +264,15 @@ pub async fn connect_to_peer(
                     addr: remote_addr,
                 },
                 last_vv: remote_vv,
+                phi_detector: PhiAccrualDetector::new(
+                    config.phi_window_size,
+                    config.phi_min_std_deviation_ms,
+                ),
+                gossip_tx,
             },
         );
-    }
+        gossip_rx
+    };
 
     // 4. Send initial full delta
     {
@@ -259,6 +298,7 @@ pub async fn connect_to_peer(
         &config,
         &cookie,
         &state,
+        &mut gossip_rx,
     )
     .await;
 
@@ -283,6 +323,7 @@ async fn peer_message_loop<R, W>(
     config: &Config,
     _cookie: &[u8],
     state: &Arc<Mutex<DaemonState>>,
+    gossip_rx: &mut tokio::sync::mpsc::Receiver<()>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -290,7 +331,10 @@ where
 {
     let mut heartbeat_interval =
         time::interval(Duration::from_secs(config.heartbeat_interval_secs));
-    let mut sync_interval = time::interval(Duration::from_secs(config.sync_interval_secs));
+    // Phi check runs at a fraction of the heartbeat interval so we detect
+    // failures promptly without burning CPU.
+    let mut phi_check_interval =
+        time::interval(Duration::from_secs(config.heartbeat_interval_secs));
     let shutdown = state.lock().await.shutdown.clone();
 
     loop {
@@ -302,7 +346,25 @@ where
             _ = heartbeat_interval.tick() => {
                 write_frame(writer, &Message::Heartbeat).await?;
             }
-            _ = sync_interval.tick() => {
+            _ = phi_check_interval.tick() => {
+                // Check phi accrual failure detector
+                let st = state.lock().await;
+                if let Some(peer) = st.peers.get(remote_node_id) {
+                    let phi = peer.phi_detector.phi();
+                    if phi > config.phi_threshold {
+                        warn!(
+                            peer = %remote_node_id,
+                            phi = phi,
+                            threshold = config.phi_threshold,
+                            "phi accrual threshold exceeded, declaring peer dead"
+                        );
+                        drop(st);
+                        return Ok(());
+                    }
+                }
+            }
+            Some(()) = gossip_rx.recv() => {
+                // Gossip tick: the main loop selected us for a delta sync
                 let st = state.lock().await;
                 if let Some(peer) = st.peers.get(remote_node_id) {
                     let delta_bytes = st.membership.delta_for_peer(&peer.last_vv);
@@ -317,6 +379,11 @@ where
                         write_frame(writer, &Message::HeartbeatAck).await?;
                     }
                     Some(Message::HeartbeatAck) => {
+                        // Update the phi accrual failure detector
+                        let mut st = state.lock().await;
+                        if let Some(peer) = st.peers.get_mut(remote_node_id) {
+                            peer.phi_detector.heartbeat();
+                        }
                         debug!(peer = %remote_node_id, "heartbeat ack");
                     }
                     Some(Message::MembershipSync { delta_bytes, sender_vv }) => {

@@ -9,6 +9,10 @@ use concordat::vv::VersionVector;
 // with u32 BE length-prefix framing.
 // ---------------------------------------------------------------------------
 
+/// Current wire protocol version. Bump when the `Message` enum changes in a
+/// backwards-incompatible way.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Top-level wire message between PMD instances.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Message {
@@ -18,6 +22,10 @@ pub enum Message {
         listen_addr: SocketAddr,
         nonce: [u8; 32],
         cookie_hmac: Vec<u8>,
+        /// Semantic version string of the sending node (e.g. "0.1.0").
+        version: String,
+        /// Wire protocol version — must match for communication.
+        protocol_version: u32,
     },
 
     /// Responder replies with its own challenge + version vector.
@@ -27,6 +35,10 @@ pub enum Message {
         nonce: [u8; 32],
         cookie_hmac: Vec<u8>,
         vv: VersionVector,
+        /// Semantic version string of the responding node.
+        version: String,
+        /// Wire protocol version — must match for communication.
+        protocol_version: u32,
     },
 
     /// Delta-state CRDT membership sync.
@@ -225,6 +237,8 @@ mod tests {
             listen_addr: "127.0.0.1:4369".parse().unwrap(),
             nonce: [42u8; 32],
             cookie_hmac: vec![1, 2, 3],
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
         };
         let decoded = roundtrip(&msg);
         match decoded {
@@ -233,11 +247,15 @@ mod tests {
                 listen_addr,
                 nonce,
                 cookie_hmac,
+                version,
+                protocol_version,
             } => {
                 assert_eq!(node_id, "node-1");
                 assert_eq!(listen_addr, "127.0.0.1:4369".parse::<SocketAddr>().unwrap());
                 assert_eq!(nonce, [42u8; 32]);
                 assert_eq!(cookie_hmac, vec![1, 2, 3]);
+                assert_eq!(version, "0.1.0");
+                assert_eq!(protocol_version, PROTOCOL_VERSION);
             }
             other => panic!("expected Handshake, got {other:?}"),
         }
@@ -251,15 +269,24 @@ mod tests {
             nonce: [7u8; 32],
             cookie_hmac: vec![9, 8, 7],
             vv: VersionVector::new(),
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
         };
         let decoded = roundtrip(&msg);
         match decoded {
             Message::HandshakeAck {
-                node_id, nonce, vv, ..
+                node_id,
+                nonce,
+                vv,
+                version,
+                protocol_version,
+                ..
             } => {
                 assert_eq!(node_id, "node-2");
                 assert_eq!(nonce, [7u8; 32]);
                 assert!(vv.is_empty());
+                assert_eq!(version, "0.1.0");
+                assert_eq!(protocol_version, PROTOCOL_VERSION);
             }
             other => panic!("expected HandshakeAck, got {other:?}"),
         }
@@ -351,6 +378,8 @@ mod tests {
             listen_addr: "127.0.0.1:4369".parse().unwrap(),
             nonce: [99u8; 32],
             cookie_hmac: vec![1, 2, 3, 4, 5],
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &msg).await.unwrap();

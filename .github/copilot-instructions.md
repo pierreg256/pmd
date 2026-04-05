@@ -15,6 +15,8 @@ PMD is an Erlang EPMD-inspired distributed daemon written in Rust. It maintains 
 - **Inter-PMD**: TCP + TLS (port 4369 default), length-prefixed bincode frames
 - **Membership state**: `concordat::CrdtDoc` storing nodes at `/nodes/<node_id>`
 - **Cookie auth**: HMAC-SHA256 challenge/response during handshake
+- **Gossip protocol**: Membership sync uses gossip-style dissemination — each node periodically picks a random connected peer and exchanges CRDT deltas, rather than broadcasting to all peers point-to-point
+- **Phi Accrual Failure Detector**: Instead of a fixed heartbeat timeout, PMD uses a phi accrual failure detector (Hayashibara et al.) that maintains a sliding window of heartbeat inter-arrival times and computes a suspicion level (φ). A node is declared dead when φ exceeds a configurable threshold (default 8.0)
 
 ## Code Style
 
@@ -70,6 +72,8 @@ cargo fmt --all -- --check
 - All network I/O goes through `daemon/server.rs` (accept) or `daemon/peer.rs` (per-peer loop)
 - The membership CRDT is the single source of truth — never maintain parallel state
 - Discovery plugins communicate via `tokio::sync::mpsc` channel, never directly open connections
+- Failure detection state lives in `daemon/failure_detector.rs` — one `PhiAccrualDetector` per peer, updated on each `HeartbeatAck`
+- Gossip target selection lives in `daemon/peer.rs` — the sync tick picks one random peer, not all
 
 ## Workflow
 

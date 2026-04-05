@@ -8,6 +8,8 @@ PMD maintains a cluster membership registry using delta-state CRDTs ([concordat]
 
 - **Single binary** — `pmd` serves as both daemon and CLI
 - **CRDT membership** — Nodes converge automatically via delta-state sync, no coordination needed
+- **Gossip protocol** — Membership sync uses gossip-style dissemination: each node periodically picks a random peer and exchanges deltas, ensuring efficient convergence without O(n) broadcasts
+- **Phi Accrual Failure Detector** — Adaptive failure detection based on heartbeat inter-arrival statistics (Hayashibara et al.), replacing fixed timeouts with a continuous suspicion level (φ)
 - **Encrypted transport** — All inter-node traffic uses TLS with auto-generated self-signed certificates
 - **Cookie authentication** — HMAC-SHA256 challenge/response prevents unauthorized cluster joins
 - **Plugin discovery** — Trait-based system for automatic peer detection (ships with a UDP broadcast plugin)
@@ -61,6 +63,16 @@ pmd start [--port 4369] [--bind 0.0.0.0] [--foreground]
 │                    │    │  Membership  │  │ │
 │                    │    │  (CrdtDoc)   │  │ │
 │                    │    └──────────────┘  │ │
+│                    │                      │ │
+│                    │  ┌────────────────┐  │ │
+│                    │  │ Failure Detect │  │ │
+│                    │  │  (φ accrual)   │  │ │
+│                    │  └────────────────┘  │ │
+│                    │                      │ │
+│                    │  ┌────────────────┐  │ │
+│                    │  │  Gossip sync   │  │ │
+│                    │  │ (random peer)  │  │ │
+│                    │  └────────────────┘  │ │
 │                    └─────────────────────┘ │
 │                                             │
 │  Discovery plugins (mpsc channel)           │

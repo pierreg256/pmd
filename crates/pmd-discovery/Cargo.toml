@@ -1,10 +1,10 @@
 [package]
 name = "portmapd-discovery"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Discovery plugin trait for portmapd — distributed node membership daemon"
-repository = "https://github.com/pierreg256/pmd"
+repository.workspace = true
 keywords = ["distributed", "membership", "discovery", "plugin"]
 categories = ["network-programming"]
 

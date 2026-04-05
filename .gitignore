@@ -4,6 +4,7 @@ Cargo.lock
 *.swo
 *~
 .DS_Store
+.vscode/
 
 # PMD runtime files (never commit)
 *.pid

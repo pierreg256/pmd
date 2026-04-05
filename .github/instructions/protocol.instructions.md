@@ -11,4 +11,5 @@ applyTo: "**/protocol.rs"
 - The `Handshake` initiator generates a random 32-byte nonce
 - The responder verifies `HMAC-SHA256(cookie, nonce)` before proceeding
 - `MembershipSync` carries opaque `Vec<u8>` from `concordat::codec::encode` — never decode inside protocol.rs
+- `MembershipSync` is sent via gossip: each sync tick targets a single random peer, not all peers
 - Add new message variants at the end of the enum for forward compatibility

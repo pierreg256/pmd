@@ -1,10 +1,10 @@
 [package]
 name = "portmapd"
-version = "0.1.0"
-edition = "2024"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Distributed node membership daemon inspired by Erlang EPMD — CRDT-based, TLS-encrypted, plugin discovery"
-repository = "https://github.com/pierreg256/pmd"
+repository.workspace = true
 keywords = ["distributed", "membership", "crdt", "epmd", "daemon"]
 categories = ["network-programming", "command-line-utilities"]
 
@@ -13,8 +13,8 @@ name = "pmd"
 path = "src/main.rs"
 
 [dependencies]
-portmapd-discovery = { version = "0.1.0", path = "../pmd-discovery" }
-portmapd-broadcast = { version = "0.1.0", path = "../pmd-broadcast" }
+portmapd-discovery = { path = "../pmd-discovery" }
+portmapd-broadcast = { path = "../pmd-broadcast" }
 
 concordat = "0.1"
 

@@ -163,6 +163,9 @@ mod tests {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
+            phi_threshold: 8.0,
+            phi_window_size: 1000,
+            phi_min_std_deviation_ms: 500.0,
         }
     }
 

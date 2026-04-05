@@ -3,7 +3,8 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "pmd",
-    about = "Port Mapper Daemon — distributed node membership"
+    about = "Port Mapper Daemon — distributed node membership",
+    version = env!("CARGO_PKG_VERSION"),
 )]
 pub struct Cli {
     #[command(subcommand)]

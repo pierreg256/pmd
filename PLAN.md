@@ -97,6 +97,11 @@ pmd/
 21. ✅ **Port mapping / Service registration** — `pmd register <name> -P <port>`, `pmd unregister <name>`, `pmd lookup <name>`. Services stored in CRDT at `/services/<node_id>/<name>`, replicated across cluster.
 22. ✅ **Event subscriptions** — `pmd subscribe` streams join/leave events in real-time via long-lived Unix socket connection. Uses `broadcast::channel` internally.
 
+### Phase 8 : Gossip Protocol & Phi Accrual Failure Detector
+
+23. **Phi Accrual Failure Detector** (`daemon/failure_detector.rs`) — Replace fixed heartbeat timeout with a phi accrual failure detector (Hayashibara et al.). Maintains a sliding window of heartbeat inter-arrival times per peer. Computes a suspicion level φ based on the cumulative distribution of inter-arrival times. A peer is declared dead when φ exceeds a configurable threshold (default 8.0). Config fields: `phi_threshold` (default 8.0), `phi_window_size` (default 1000), `phi_min_std_deviation_ms` (default 500).
+24. **Gossip-based membership sync** — Replace point-to-point sync (every peer every tick) with gossip-style dissemination. Each sync interval, a node picks ONE random connected peer and exchanges CRDT deltas. This reduces sync traffic from O(n) to O(1) per tick while still achieving convergence via epidemic spread.
+
 ## Dépendances clés (Cargo.toml)
 
 | Crate | Usage |

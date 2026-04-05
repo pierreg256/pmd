@@ -28,6 +28,13 @@ pub struct Config {
     pub heartbeat_interval_secs: u64,
     #[allow(dead_code)] // used for peer timeout detection
     pub heartbeat_timeout_secs: u64,
+    /// Phi accrual failure detector threshold. A peer is declared dead when φ
+    /// exceeds this value. Higher = more lenient.
+    pub phi_threshold: f64,
+    /// Maximum number of heartbeat inter-arrival samples retained per peer.
+    pub phi_window_size: usize,
+    /// Floor for the standard deviation (ms) in the phi calculation.
+    pub phi_min_std_deviation_ms: f64,
 }
 
 /// TOML-serializable config file (`~/.pmd/config.toml`).
@@ -38,6 +45,9 @@ pub struct ConfigFile {
     pub sync_interval_secs: Option<u64>,
     pub heartbeat_interval_secs: Option<u64>,
     pub heartbeat_timeout_secs: Option<u64>,
+    pub phi_threshold: Option<f64>,
+    pub phi_window_size: Option<usize>,
+    pub phi_min_std_deviation_ms: Option<f64>,
     pub ca_cert_path: Option<String>,
     /// Discovery plugins to enable (e.g. ["broadcast"]).
     #[serde(default)]
@@ -65,6 +75,9 @@ impl Config {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
+            phi_threshold: 8.0,
+            phi_window_size: 1000,
+            phi_min_std_deviation_ms: 500.0,
             home_dir,
         })
     }
@@ -118,6 +131,9 @@ impl Config {
             sync_interval_secs: cf.sync_interval_secs.unwrap_or(5),
             heartbeat_interval_secs: cf.heartbeat_interval_secs.unwrap_or(10),
             heartbeat_timeout_secs: cf.heartbeat_timeout_secs.unwrap_or(30),
+            phi_threshold: cf.phi_threshold.unwrap_or(8.0),
+            phi_window_size: cf.phi_window_size.unwrap_or(1000),
+            phi_min_std_deviation_ms: cf.phi_min_std_deviation_ms.unwrap_or(500.0),
             home_dir,
         };
 
@@ -201,6 +217,9 @@ mod tests {
             sync_interval_secs: 5,
             heartbeat_interval_secs: 10,
             heartbeat_timeout_secs: 30,
+            phi_threshold: 8.0,
+            phi_window_size: 1000,
+            phi_min_std_deviation_ms: 500.0,
         };
         config.ensure_dirs().unwrap();
         assert!(tmpdir.exists());
