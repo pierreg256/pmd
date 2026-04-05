@@ -59,7 +59,7 @@ async fn run_inbound<R, W>(
     state: Arc<Mutex<DaemonState>>,
 ) -> Result<()>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin,
 {
     // 1. Read Handshake from initiator
@@ -159,7 +159,7 @@ where
 
     // 5. Run message loop
     let result = peer_message_loop(
-        &mut reader,
+        reader,
         &mut writer,
         &remote_node_id,
         &config,
@@ -292,7 +292,7 @@ pub async fn connect_to_peer(
 
     // 5. Message loop
     let result = peer_message_loop(
-        &mut reader,
+        reader,
         &mut writer,
         &remote_node_id,
         &config,
@@ -313,11 +313,19 @@ pub async fn connect_to_peer(
 }
 
 // ---------------------------------------------------------------------------
-// Shared message loop (heartbeat + sync + read)
+// Shared message loop (heartbeat + gossip + phi check + read)
 // ---------------------------------------------------------------------------
 
+/// Run the per-peer event loop.
+///
+/// The reader is moved into a dedicated spawned task that sends fully-decoded
+/// messages through an `mpsc` channel. This avoids the classic
+/// `read_exact`-inside-`select!` cancellation bug: `read_exact` is **not**
+/// cancel-safe, so if another `select!` branch fires while a partial read is
+/// in progress, the consumed bytes are lost and the framing desyncs.
+/// `mpsc::recv()`, on the other hand, **is** cancel-safe.
 async fn peer_message_loop<R, W>(
-    reader: &mut R,
+    reader: R,
     writer: &mut W,
     remote_node_id: &str,
     config: &Config,
@@ -326,95 +334,117 @@ async fn peer_message_loop<R, W>(
     gossip_rx: &mut tokio::sync::mpsc::Receiver<()>,
 ) -> Result<()>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin,
 {
     let mut heartbeat_interval =
         time::interval(Duration::from_secs(config.heartbeat_interval_secs));
-    // Phi check runs at a fraction of the heartbeat interval so we detect
-    // failures promptly without burning CPU.
     let mut phi_check_interval =
         time::interval(Duration::from_secs(config.heartbeat_interval_secs));
     let shutdown = state.lock().await.shutdown.clone();
 
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                debug!(peer = %remote_node_id, "shutdown signal, closing peer");
-                return Ok(());
-            }
-            _ = heartbeat_interval.tick() => {
-                write_frame(writer, &Message::Heartbeat).await?;
-            }
-            _ = phi_check_interval.tick() => {
-                // Check phi accrual failure detector
-                let st = state.lock().await;
-                if let Some(peer) = st.peers.get(remote_node_id) {
-                    let phi = peer.phi_detector.phi();
-                    if phi > config.phi_threshold {
-                        warn!(
-                            peer = %remote_node_id,
-                            phi = phi,
-                            threshold = config.phi_threshold,
-                            "phi accrual threshold exceeded, declaring peer dead"
-                        );
-                        drop(st);
-                        return Ok(());
+    // Spawn a dedicated reader task so read_frame is never cancelled mid-read.
+    let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel::<Result<Message>>(32);
+    let reader_task = tokio::spawn(async move {
+        let mut reader = reader;
+        loop {
+            match read_frame(&mut reader).await {
+                Ok(Some(msg)) => {
+                    if msg_tx.send(Ok(msg)).await.is_err() {
+                        break; // receiver dropped — peer loop exited
                     }
                 }
-            }
-            Some(()) = gossip_rx.recv() => {
-                // Gossip tick: the main loop selected us for a delta sync
-                let st = state.lock().await;
-                if let Some(peer) = st.peers.get(remote_node_id) {
-                    let delta_bytes = st.membership.delta_for_peer(&peer.last_vv);
-                    let sender_vv = st.membership.version_vector().clone();
-                    drop(st);
-                    write_frame(writer, &Message::MembershipSync { delta_bytes, sender_vv }).await?;
+                Ok(None) => break, // clean EOF
+                Err(e) => {
+                    let _ = msg_tx.send(Err(e)).await;
+                    break;
                 }
             }
-            result = read_frame(reader) => {
-                match result? {
-                    Some(Message::Heartbeat) => {
-                        write_frame(writer, &Message::HeartbeatAck).await?;
-                    }
-                    Some(Message::HeartbeatAck) => {
-                        // Update the phi accrual failure detector
-                        let mut st = state.lock().await;
-                        if let Some(peer) = st.peers.get_mut(remote_node_id) {
-                            peer.phi_detector.heartbeat();
-                        }
-                        debug!(peer = %remote_node_id, "heartbeat ack");
-                    }
-                    Some(Message::MembershipSync { delta_bytes, sender_vv }) => {
-                        let mut st = state.lock().await;
-                        let changes = st.membership.merge_remote(&delta_bytes)?;
-                        if let Some(peer) = st.peers.get_mut(remote_node_id) {
-                            peer.last_vv = sender_vv;
-                        }
-                        // Broadcast notifications for changes
-                        for change in &changes {
-                            info!(
-                                event = ?change.event,
-                                node_id = %change.node_id,
-                                addr = %change.addr,
-                                "membership change"
+        }
+    });
+
+    let result = async {
+        loop {
+            tokio::select! {
+                _ = shutdown.cancelled() => {
+                    debug!(peer = %remote_node_id, "shutdown signal, closing peer");
+                    return Ok(());
+                }
+                _ = heartbeat_interval.tick() => {
+                    write_frame(writer, &Message::Heartbeat).await?;
+                }
+                _ = phi_check_interval.tick() => {
+                    // Check phi accrual failure detector
+                    let st = state.lock().await;
+                    if let Some(peer) = st.peers.get(remote_node_id) {
+                        let phi = peer.phi_detector.phi();
+                        if phi > config.phi_threshold {
+                            warn!(
+                                peer = %remote_node_id,
+                                phi = phi,
+                                threshold = config.phi_threshold,
+                                "phi accrual threshold exceeded, declaring peer dead"
                             );
+                            drop(st);
+                            return Ok(());
                         }
-                        crate::daemon::broadcast_events(&st, &changes);
                     }
-                    Some(Message::Notification { event, node_id, addr }) => {
-                        info!(?event, node_id = %node_id, addr = %addr, "peer notification");
+                }
+                Some(()) = gossip_rx.recv() => {
+                    // Gossip tick: the main loop selected us for a delta sync
+                    let st = state.lock().await;
+                    if let Some(peer) = st.peers.get(remote_node_id) {
+                        let delta_bytes = st.membership.delta_for_peer(&peer.last_vv);
+                        let sender_vv = st.membership.version_vector().clone();
+                        drop(st);
+                        write_frame(writer, &Message::MembershipSync { delta_bytes, sender_vv }).await?;
                     }
-                    Some(other) => {
-                        warn!(peer = %remote_node_id, msg = ?other, "unexpected message in peer loop");
-                    }
-                    None => {
-                        // Clean EOF
-                        return Ok(());
+                }
+                result = msg_rx.recv() => {
+                    match result {
+                        Some(Ok(Message::Heartbeat)) => {
+                            write_frame(writer, &Message::HeartbeatAck).await?;
+                        }
+                        Some(Ok(Message::HeartbeatAck)) => {
+                            // Update the phi accrual failure detector
+                            let mut st = state.lock().await;
+                            if let Some(peer) = st.peers.get_mut(remote_node_id) {
+                                peer.phi_detector.heartbeat();
+                            }
+                            debug!(peer = %remote_node_id, "heartbeat ack");
+                        }
+                        Some(Ok(Message::MembershipSync { delta_bytes, sender_vv })) => {
+                            let mut st = state.lock().await;
+                            let changes = st.membership.merge_remote(&delta_bytes)?;
+                            if let Some(peer) = st.peers.get_mut(remote_node_id) {
+                                peer.last_vv = sender_vv;
+                            }
+                            // Broadcast notifications for changes
+                            for change in &changes {
+                                info!(
+                                    event = ?change.event,
+                                    node_id = %change.node_id,
+                                    addr = %change.addr,
+                                    "membership change"
+                                );
+                            }
+                            crate::daemon::broadcast_events(&st, &changes);
+                        }
+                        Some(Ok(Message::Notification { event, node_id, addr })) => {
+                            info!(?event, node_id = %node_id, addr = %addr, "peer notification");
+                        }
+                        Some(Ok(other)) => {
+                            warn!(peer = %remote_node_id, msg = ?other, "unexpected message in peer loop");
+                        }
+                        Some(Err(e)) => return Err(e),
+                        None => return Ok(()), // reader task ended (EOF or dropped)
                     }
                 }
             }
         }
     }
+    .await;
+
+    reader_task.abort();
+    result
 }
