@@ -153,8 +153,8 @@ async fn dispatch_request(
             ControlResponse::Ok
         }
         ControlRequest::Shutdown => {
-            let st = state.lock().await;
-            st.shutdown.cancel();
+            let mut st = state.lock().await;
+            st.shutdown_requested = true;
             ControlResponse::Ok
         }
         ControlRequest::Register {
@@ -241,6 +241,7 @@ mod tests {
             pending_joins: Vec::new(),
             pending_leaves: Vec::new(),
             shutdown: CancellationToken::new(),
+            shutdown_requested: false,
             event_tx,
         }))
     }
@@ -362,12 +363,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_control_shutdown_cancels_token() {
+    async fn test_control_shutdown_sets_flag() {
         let socket_path = temp_socket_path();
         let _ = std::fs::remove_file(&socket_path);
         let listener = UnixListener::bind(&socket_path).unwrap();
         let state = make_test_state();
-        let shutdown = state.lock().await.shutdown.clone();
         let server_state = Arc::clone(&state);
         tokio::spawn(async move {
             let _ = run_control_socket(listener, server_state).await;
@@ -378,7 +378,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(resp, ControlResponse::Ok));
-        assert!(shutdown.is_cancelled());
+        assert!(state.lock().await.shutdown_requested);
         let _ = std::fs::remove_file(&socket_path);
     }
 

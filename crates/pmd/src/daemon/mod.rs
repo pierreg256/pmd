@@ -30,6 +30,8 @@ pub struct DaemonState {
     pub pending_joins: Vec<String>,
     pub pending_leaves: Vec<String>,
     pub shutdown: CancellationToken,
+    /// Set by `pmd stop` — the main loop will perform graceful shutdown.
+    pub shutdown_requested: bool,
     /// Broadcast channel for membership event subscribers.
     pub event_tx: broadcast::Sender<MembershipChange>,
 }
@@ -72,6 +74,7 @@ pub async fn run(
         pending_joins: Vec::new(),
         pending_leaves: Vec::new(),
         shutdown: shutdown.clone(),
+        shutdown_requested: false,
         event_tx,
     }));
 
@@ -137,33 +140,52 @@ pub async fn run(
     // Main loop: process pending joins/leaves + gossip tick
     let mut tick = time::interval(Duration::from_millis(500));
     let mut gossip_tick = time::interval(Duration::from_secs(config.sync_interval_secs));
+    // Mesh expansion: periodically connect to an indirect node to build
+    // a richer peer topology instead of staying in a pure star.
+    let mut mesh_tick = time::interval(Duration::from_secs(config.sync_interval_secs * 2));
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
                 info!("received SIGINT, shutting down gracefully");
-                shutdown.cancel();
-                break;
-            }
-            _ = shutdown.cancelled() => {
-                info!("shutdown requested");
                 break;
             }
             _ = tick.tick() => {
+                // Check for shutdown request from `pmd stop`
+                {
+                    let st = state.lock().await;
+                    if st.shutdown_requested {
+                        info!("shutdown requested");
+                        break;
+                    }
+                }
                 process_tick(&config, &cookie, &state, &connector).await;
             }
             _ = gossip_tick.tick() => {
                 gossip_sync_random_peer(&state).await;
             }
+            _ = mesh_tick.tick() => {
+                mesh_expand_random_peer(&state).await;
+            }
         }
     }
 
-    // Graceful shutdown: remove self from membership
+    // Graceful shutdown: remove self from membership, push to all peers,
+    // then cancel the shutdown token so peer tasks exit.
     {
         let mut st = state.lock().await;
         let my_id = st.membership.node_id().to_string();
         st.membership.remove_node(&my_id);
         info!("removed self from membership");
+        // Signal all connected peers to sync immediately so they receive
+        // the removal delta before we tear down connections.
+        for peer in st.peers.values() {
+            let _ = peer.gossip_tx.try_send(());
+        }
     }
+
+    // Give peer tasks time to send the final sync before shutting down.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    shutdown.cancel();
 
     // Cleanup
     let _ = std::fs::remove_file(&config.socket_path);
@@ -243,6 +265,47 @@ async fn gossip_sync_random_peer(state: &Arc<Mutex<DaemonState>>) {
         drop(st);
         // Non-blocking send — if the channel is full, skip this tick.
         let _ = tx.try_send(());
+    }
+}
+
+/// Mesh expansion: pick one random node known via CRDT that we're NOT directly
+/// connected to, and queue a connection attempt. Over time this turns the star
+/// topology into a partial mesh, improving gossip dissemination and resilience.
+///
+/// Only expands when the node has fewer direct peers than the cluster size
+/// would suggest (target: sqrt(n) peers for good gossip dissemination).
+async fn mesh_expand_random_peer(state: &Arc<Mutex<DaemonState>>) {
+    use rand::seq::SliceRandom;
+
+    let mut st = state.lock().await;
+    let my_id = st.membership.node_id().to_string();
+    let members = st.membership.members();
+    let cluster_size = members.len();
+    let direct_peers = st.peers.len();
+
+    // Target: at least sqrt(n) peers for O(log n) gossip convergence.
+    // Don't expand if we already have enough peers.
+    let target = (cluster_size as f64).sqrt().ceil() as usize;
+    if direct_peers >= target || direct_peers >= cluster_size.saturating_sub(1) {
+        return;
+    }
+
+    // Find nodes we know about but aren't directly connected to.
+    let indirect: Vec<_> = members
+        .iter()
+        .filter(|n| n.node_id != my_id && !st.peers.contains_key(&n.node_id))
+        .collect();
+
+    if indirect.is_empty() {
+        return;
+    }
+
+    if let Some(node) = indirect.choose(&mut rand::thread_rng()) {
+        let addr = node.addr.to_string();
+        if !st.pending_joins.contains(&addr) {
+            info!(addr = %addr, node_id = %node.node_id, peers = direct_peers, target, "mesh expansion: connecting to indirect peer");
+            st.pending_joins.push(addr);
+        }
     }
 }
 

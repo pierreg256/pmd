@@ -14,8 +14,8 @@ name = "pmd"
 path = "src/main.rs"
 
 [dependencies]
-portmapd-discovery = { version = "0.3.0", path = "../pmd-discovery" }
-portmapd-broadcast = { version = "0.3.0", path = "../pmd-broadcast" }
+portmapd-discovery = { version = "0.4.0", path = "../pmd-discovery" }
+portmapd-broadcast = { version = "0.4.0", path = "../pmd-broadcast" }
 
 concordat = "0.1"
 

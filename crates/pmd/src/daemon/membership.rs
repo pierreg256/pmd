@@ -76,14 +76,18 @@ impl Membership {
     }
 
     /// Remove a node from the CRDT.
+    ///
+    /// Uses `doc.set()` with a tombstone marker instead of `doc.remove()`
+    /// because concordat's remove is not effective for values created by
+    /// a different replica.  The tombstone value is filtered out in `members()`.
     pub fn remove_node(&mut self, node_id: &str) {
         let path = format!("/nodes/{node_id}");
-        self.doc.remove(&path);
-        // Also remove all services for this node
+        self.doc.set(&path, json!({"status": "dead"}));
+        // Also tombstone all services for this node
         let services = self.node_services(node_id);
         for svc in services {
             let svc_path = format!("/services/{node_id}/{}", svc.name);
-            self.doc.remove(&svc_path);
+            self.doc.set(&svc_path, json!({"status": "dead"}));
         }
         info!(node_id, "node removed from membership");
     }
@@ -218,6 +222,10 @@ impl Membership {
         nodes
             .iter()
             .filter_map(|(id, val)| {
+                // Skip tombstoned nodes
+                if val.get("status").and_then(|s| s.as_str()) == Some("dead") {
+                    return None;
+                }
                 let addr_str = val.get("addr")?.as_str()?;
                 let addr: SocketAddr = addr_str.parse().ok()?;
                 let joined_at = val.get("joined_at")?.as_u64().unwrap_or(0);
@@ -242,6 +250,10 @@ impl Membership {
             Some(serde_json::Value::Object(m)) => m
                 .iter()
                 .filter_map(|(id, val)| {
+                    // Skip tombstoned nodes
+                    if val.get("status").and_then(|s| s.as_str()) == Some("dead") {
+                        return None;
+                    }
                     let addr = val.get("addr")?.as_str()?.to_string();
                     Some((id.clone(), addr))
                 })
@@ -515,5 +527,62 @@ mod tests {
 
         let members = m.members();
         assert_eq!(members[0].metadata.get("role").unwrap(), "worker");
+    }
+
+    /// Reproduces the gossip remove problem: node-c adds itself, all replicas
+    /// receive the add. Then node-a removes node-c (peer disconnect).
+    /// Following gossip from node-b (which still has node-c) must NOT
+    /// re-introduce node-c into node-a's membership.
+    #[test]
+    fn test_remove_survives_gossip_from_stale_peer() {
+        // 3 nodes: a (seed), b, c — star topology via a
+        let mut ma = Membership::new("node-a");
+        let mut mb = Membership::new("node-b");
+        let mut mc = Membership::new("node-c");
+
+        ma.add_node("node-a", addr("127.0.0.1:4369"), HashMap::new());
+        mb.add_node("node-b", addr("127.0.0.1:4370"), HashMap::new());
+        mc.add_node("node-c", addr("127.0.0.1:4371"), HashMap::new());
+
+        // Full sync: everyone sees everyone
+        let da = ma.full_delta();
+        let db = mb.full_delta();
+        let dc = mc.full_delta();
+        ma.merge_remote(&db).unwrap();
+        ma.merge_remote(&dc).unwrap();
+        mb.merge_remote(&da).unwrap();
+        mb.merge_remote(&dc).unwrap();
+        mc.merge_remote(&da).unwrap();
+        mc.merge_remote(&db).unwrap();
+        assert_eq!(ma.members().len(), 3);
+        assert_eq!(mb.members().len(), 3);
+
+        // node-c disconnects; node-a removes it (step 6 in peer.rs)
+        ma.remove_node("node-c");
+        assert_eq!(ma.members().len(), 2);
+
+        // node-b gossips to node-a (node-b still has node-c)
+        let vv_a = ma.version_vector().clone();
+        let delta_b_for_a = mb.delta_for_peer(&vv_a);
+        ma.merge_remote(&delta_b_for_a).unwrap();
+
+        // node-c must NOT reappear on node-a
+        assert_eq!(
+            ma.members().len(),
+            2,
+            "node-c reappeared after merge from stale peer — CRDT remove not respected"
+        );
+
+        // node-a gossips removal to node-b
+        let vv_b = mb.version_vector().clone();
+        let delta_a_for_b = ma.delta_for_peer(&vv_b);
+        mb.merge_remote(&delta_a_for_b).unwrap();
+
+        // node-b should now also have only 2 members
+        assert_eq!(
+            mb.members().len(),
+            2,
+            "removal did not propagate from node-a to node-b"
+        );
     }
 }

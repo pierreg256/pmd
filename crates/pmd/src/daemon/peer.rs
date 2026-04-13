@@ -180,6 +180,11 @@ where
             addr: remote_addr.to_string(),
         };
         crate::daemon::broadcast_events(&st, &[change]);
+        // Immediately signal all remaining peers to sync so the removal
+        // propagates without waiting for the next gossip tick.
+        for peer in st.peers.values() {
+            let _ = peer.gossip_tx.try_send(());
+        }
     }
     info!(node_id = %remote_node_id, "inbound peer disconnected");
 
@@ -320,6 +325,11 @@ pub async fn connect_to_peer(
             addr: remote_addr.to_string(),
         };
         crate::daemon::broadcast_events(&st, &[change]);
+        // Immediately signal all remaining peers to sync so the removal
+        // propagates without waiting for the next gossip tick.
+        for peer in st.peers.values() {
+            let _ = peer.gossip_tx.try_send(());
+        }
     }
     info!(node_id = %remote_node_id, "outbound peer disconnected");
 

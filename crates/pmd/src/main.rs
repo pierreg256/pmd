@@ -38,6 +38,13 @@ fn main() -> Result<()> {
             )?;
             config.ensure_dirs()?;
 
+            // Check if a daemon is already running on this port by probing the
+            // control socket.  If we can connect, it's alive — exit cleanly.
+            if std::os::unix::net::UnixStream::connect(&config.socket_path).is_ok() {
+                println!("PMD daemon is already running on port {port}.");
+                return Ok(());
+            }
+
             let node_id = uuid::Uuid::new_v4().to_string();
 
             if !foreground {

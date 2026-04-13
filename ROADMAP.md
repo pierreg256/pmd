@@ -36,7 +36,7 @@ Phases 1–7 are complete. The daemon supports graceful shutdown, automatic reco
 ### Phase 8: Advanced Discovery
 
 - [ ] **mDNS/DNS-SD plugin** — Zero-config discovery via multicast DNS
-- [ ] **Cloud plugins** — AWS EC2 tag-based, Kubernetes endpoint-based, Consul-based discovery
+- [ ] **Cloud plugins** — Azure Tag-based, AWS EC2 tag-based, Kubernetes endpoint-based, Consul-based discovery
 - [ ] **Dynamic plugin loading** — Load discovery plugins at runtime via `libloading` (shared libraries)
 
 ### Phase 9: Federation
