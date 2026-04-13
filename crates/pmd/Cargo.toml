@@ -14,10 +14,11 @@ name = "pmd"
 path = "src/main.rs"
 
 [dependencies]
-portmapd-discovery = { version = "0.4.0", path = "../pmd-discovery" }
-portmapd-broadcast = { version = "0.4.0", path = "../pmd-broadcast" }
+portmapd-discovery = { version = "0.5.0", path = "../pmd-discovery" }
+portmapd-broadcast = { version = "0.5.0", path = "../pmd-broadcast" }
+portmapd-azure = { version = "0.5.0", path = "../pmd-azure" }
 
-concordat = "0.1"
+concordat = "0.2"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
@@ -41,3 +42,4 @@ daemonize = "0.5"
 dirs = "6"
 toml = "0.8"
 local-ip-address = "0.6"
+sd-notify = "0.4"

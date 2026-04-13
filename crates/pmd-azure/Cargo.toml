@@ -1,0 +1,23 @@
+[package]
+name = "portmapd-azure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Azure tag-based discovery plugin for portmapd — discovers PMD peers via Azure Instance Metadata and Resource Graph"
+repository.workspace = true
+keywords = ["distributed", "discovery", "azure", "cloud"]
+categories = ["network-programming"]
+readme = "README.md"
+
+[dependencies]
+portmapd-discovery = { version = "0.5.0", path = "../pmd-discovery" }
+tokio = { version = "1", features = ["net", "time", "sync", "macros", "rt"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+reqwest = { version = "0.12", features = ["json"], default-features = false, optional = true }
+
+[features]
+default = ["native-tls"]
+native-tls = ["reqwest/default-tls"]
+rustls = ["reqwest/rustls-tls"]

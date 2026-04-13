@@ -166,6 +166,7 @@ mod tests {
             phi_threshold: 8.0,
             phi_window_size: 1000,
             phi_min_std_deviation_ms: 500.0,
+            metrics_port: 0,
         }
     }
 

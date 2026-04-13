@@ -34,6 +34,10 @@ pub enum Commands {
         /// Discovery plugins to enable (e.g. "broadcast")
         #[arg(short, long)]
         discovery: Vec<String>,
+
+        /// Prometheus metrics HTTP port (0 = disabled)
+        #[arg(long, default_value_t = 0)]
+        metrics_port: u16,
     },
 
     /// Stop the running PMD daemon

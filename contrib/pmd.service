@@ -1,0 +1,26 @@
+[Unit]
+Description=PMD — Port Mapper Daemon (distributed node membership)
+Documentation=https://github.com/pierreg256/pmd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/pmd start --foreground --config /etc/pmd/config.toml
+ExecStop=/usr/local/bin/pmd stop
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/pmd
+PrivateTmp=true
+
+# Environment
+Environment=RUST_LOG=info
+StateDirectory=pmd
+
+[Install]
+WantedBy=multi-user.target

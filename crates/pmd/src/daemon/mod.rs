@@ -1,6 +1,7 @@
 pub mod control;
 pub mod failure_detector;
 pub mod membership;
+pub mod metrics;
 pub mod peer;
 pub mod server;
 
@@ -113,6 +114,23 @@ pub async fn run(
         }
     });
 
+    // Spawn metrics HTTP server (if configured)
+    if config.metrics_port > 0 {
+        let metrics_addr: SocketAddr =
+            format!("{}:{}", config.bind, config.metrics_port).parse()?;
+        match TcpListener::bind(metrics_addr).await {
+            Ok(metrics_listener) => {
+                let metrics_state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    metrics::run_metrics_server(metrics_listener, metrics_state).await;
+                });
+            }
+            Err(e) => {
+                warn!(addr = %metrics_addr, error = %e, "failed to bind metrics port, metrics disabled");
+            }
+        }
+    }
+
     // Spawn discovery plugins
     let (discovered_tx, mut discovered_rx) = tokio::sync::mpsc::channel::<SocketAddr>(64);
     start_discovery_plugins(
@@ -136,6 +154,9 @@ pub async fn run(
             }
         }
     });
+
+    // Signal systemd that we're ready (no-op if not running under systemd)
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Ready]);
 
     // Main loop: process pending joins/leaves + gossip tick
     let mut tick = time::interval(Duration::from_millis(500));
@@ -171,6 +192,7 @@ pub async fn run(
 
     // Graceful shutdown: remove self from membership, push to all peers,
     // then cancel the shutdown token so peer tasks exit.
+    let _ = sd_notify::notify(true, &[sd_notify::NotifyState::Stopping]);
     {
         let mut st = state.lock().await;
         let my_id = st.membership.node_id().to_string();
@@ -349,6 +371,32 @@ fn start_discovery_plugins(
         match name.as_str() {
             "broadcast" => {
                 let plugin = portmapd_broadcast::BroadcastPlugin::new();
+                let ctx = DiscoveryContext {
+                    local_node: NodeInfo {
+                        node_id: node_id.to_string(),
+                        addr: listen_addr,
+                    },
+                    discovered_tx: discovered_tx.clone(),
+                };
+                let plugin_name = plugin.name().to_string();
+                let shutdown = shutdown.clone();
+                info!(plugin = %plugin_name, "starting discovery plugin");
+                tokio::spawn(async move {
+                    tokio::select! {
+                        result = plugin.start(ctx) => {
+                            if let Err(e) = result {
+                                error!(plugin = %plugin_name, error = %e, "discovery plugin error");
+                            }
+                        }
+                        _ = shutdown.cancelled() => {
+                            let _ = plugin.stop().await;
+                            info!(plugin = %plugin_name, "discovery plugin stopped");
+                        }
+                    }
+                });
+            }
+            "azure-tag" => {
+                let plugin = portmapd_azure::AzureTagPlugin::new();
                 let ctx = DiscoveryContext {
                     local_node: NodeInfo {
                         node_id: node_id.to_string(),

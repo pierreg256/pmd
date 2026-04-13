@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Phases 1–7 are complete. The daemon supports graceful shutdown, automatic reconnection, TOML config files, service registration/lookup, and real-time event subscriptions.
+Phases 1–8 are complete. The daemon supports graceful shutdown, TOML config files, service registration/lookup, real-time event subscriptions, gossip protocol with phi accrual failure detection, mesh expansion, Prometheus metrics, and systemd integration.
 
 ## Short Term (completed)
 
@@ -20,8 +20,8 @@ Phases 1–7 are complete. The daemon supports graceful shutdown, automatic reco
 - [x] **Configuration file** — TOML config at `~/.pmd/config.toml`
 - [x] **Shared CA mode** — `ca_cert_path` config field for production mTLS
 - [x] **Node metadata** — Arbitrary key-value metadata from config, replicated via CRDT
-- [ ] **Metrics** — Prometheus-compatible metrics (future)
-- [ ] **Systemd integration** — Unit file, socket activation (future)
+- [x] **Metrics** — Prometheus `/metrics` endpoint via `--metrics-port` or `metrics_port` config
+- [x] **Systemd integration** — Unit file (`contrib/pmd.service`), `sd-notify` ready/stopping signals
 - [ ] **Cross-platform** — Windows named pipe support (future)
 
 ### Phase 7: Extended Membership ✅

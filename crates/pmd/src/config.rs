@@ -35,6 +35,8 @@ pub struct Config {
     pub phi_window_size: usize,
     /// Floor for the standard deviation (ms) in the phi calculation.
     pub phi_min_std_deviation_ms: f64,
+    /// HTTP port for Prometheus metrics endpoint. 0 = disabled.
+    pub metrics_port: u16,
 }
 
 /// TOML-serializable config file (`~/.pmd/config.toml`).
@@ -48,6 +50,7 @@ pub struct ConfigFile {
     pub phi_threshold: Option<f64>,
     pub phi_window_size: Option<usize>,
     pub phi_min_std_deviation_ms: Option<f64>,
+    pub metrics_port: Option<u16>,
     pub ca_cert_path: Option<String>,
     /// Discovery plugins to enable (e.g. ["broadcast"]).
     #[serde(default)]
@@ -78,6 +81,7 @@ impl Config {
             phi_threshold: 8.0,
             phi_window_size: 1000,
             phi_min_std_deviation_ms: 500.0,
+            metrics_port: 0,
             home_dir,
         })
     }
@@ -134,6 +138,7 @@ impl Config {
             phi_threshold: cf.phi_threshold.unwrap_or(8.0),
             phi_window_size: cf.phi_window_size.unwrap_or(1000),
             phi_min_std_deviation_ms: cf.phi_min_std_deviation_ms.unwrap_or(500.0),
+            metrics_port: cf.metrics_port.unwrap_or(0),
             home_dir,
         };
 
@@ -220,6 +225,7 @@ mod tests {
             phi_threshold: 8.0,
             phi_window_size: 1000,
             phi_min_std_deviation_ms: 500.0,
+            metrics_port: 0,
         };
         config.ensure_dirs().unwrap();
         assert!(tmpdir.exists());

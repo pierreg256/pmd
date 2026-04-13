@@ -29,13 +29,18 @@ fn main() -> Result<()> {
             foreground,
             config: config_path,
             discovery,
+            metrics_port,
         } => {
-            let (config, metadata, discovery_plugins) = Config::from_file_and_args(
+            let (mut config, metadata, discovery_plugins) = Config::from_file_and_args(
                 config_path.as_deref(),
                 port,
                 bind.as_deref(),
                 &discovery,
             )?;
+            // CLI --metrics-port overrides config file (if non-zero)
+            if metrics_port > 0 {
+                config.metrics_port = metrics_port;
+            }
             config.ensure_dirs()?;
 
             // Check if a daemon is already running on this port by probing the
