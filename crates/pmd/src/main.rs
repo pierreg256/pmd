@@ -9,15 +9,17 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::Parser;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::error;
 
 use cli::{Cli, Commands};
 use config::Config;
 use daemon::control::send_control_request;
 use protocol::{ControlRequest, ControlResponse};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Entry point — synchronous so that `daemonize` can fork *before* the
+/// tokio runtime is created.  Forking after `#[tokio::main]` leaves the
+/// child with a broken runtime (stale epoll fd, dead threads), which is
+/// why the daemon silently failed to bind its control socket.
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -28,13 +30,6 @@ async fn main() -> Result<()> {
             config: config_path,
             discovery,
         } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-                )
-                .init();
-
             let (config, metadata, discovery_plugins) = Config::from_file_and_args(
                 config_path.as_deref(),
                 port,
@@ -45,27 +40,44 @@ async fn main() -> Result<()> {
 
             let node_id = uuid::Uuid::new_v4().to_string();
 
-            if foreground {
-                daemon::run(config, node_id, metadata, discovery_plugins).await?;
-            } else {
+            if !foreground {
                 let daemonize = daemonize::Daemonize::new()
                     .pid_file(&config.pid_path)
                     .working_directory(".");
 
-                match daemonize.start() {
-                    Ok(_) => {
-                        tracing_subscriber::fmt()
-                            .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
-                            .init();
-                        daemon::run(config, node_id, metadata, discovery_plugins).await?;
-                    }
-                    Err(e) => {
-                        error!(error = %e, "failed to daemonize");
-                        anyhow::bail!("daemonize failed: {e}");
-                    }
-                }
+                daemonize
+                    .start()
+                    .map_err(|e| anyhow::anyhow!("daemonize failed: {e}"))?;
             }
+
+            // Build the tokio runtime *after* daemonize so the child gets a
+            // clean runtime with its own threads and epoll fd.
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(async {
+                tracing_subscriber::fmt()
+                    .with_env_filter(
+                        tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                    )
+                    .init();
+
+                daemon::run(config, node_id, metadata, discovery_plugins).await
+            })?;
         }
+
+        // All CLI commands use a lightweight runtime.
+        other => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_cli_command(other))?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_cli_command(command: Commands) -> Result<()> {
+    match command {
+        Commands::Start { .. } => unreachable!("handled in main"),
 
         Commands::Stop { port } => {
             let config = Config::new(port, "0.0.0.0".into())?;
@@ -210,9 +222,27 @@ fn print_response(resp: &ControlResponse) {
             if nodes.is_empty() {
                 println!("No nodes in cluster.");
             } else {
-                println!("{:<40} {:<22} JOINED AT", "NODE ID", "ADDRESS");
+                println!(
+                    "{:<40} {:<22} {:<12} {:<22} PHI",
+                    "NODE ID", "ADDRESS", "JOINED AT", "LAST SEEN AT"
+                );
                 for n in nodes {
-                    println!("{:<40} {:<22} {}", n.node_id, n.addr, n.joined_at);
+                    let last_seen = if n.is_local {
+                        "(local)".to_string()
+                    } else {
+                        match n.last_seen_at {
+                            Some(ts) => format_epoch(ts),
+                            None => "(indirect)".to_string(),
+                        }
+                    };
+                    let phi_str = match n.phi {
+                        Some(phi) => format!("{phi:.2}"),
+                        None => "-".to_string(),
+                    };
+                    println!(
+                        "{:<40} {:<22} {:<12} {:<22} {}",
+                        n.node_id, n.addr, n.joined_at, last_seen, phi_str
+                    );
                     for s in &n.services {
                         println!("  └─ {} → {}:{}", s.name, s.host, s.port);
                     }
@@ -233,4 +263,28 @@ fn print_response(resp: &ControlResponse) {
             // Handled in Subscribe branch
         }
     }
+}
+
+/// Format a Unix epoch timestamp as a human-readable UTC string.
+fn format_epoch(epoch: u64) -> String {
+    let secs = epoch;
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Civil date from days since 1970-01-01 (algorithm from Howard Hinnant)
+    let z = days_since_epoch as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{m:02}-{d:02} {hours:02}:{minutes:02}:{seconds:02}Z")
 }

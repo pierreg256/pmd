@@ -99,6 +99,7 @@ async fn dispatch_request(
         }
         ControlRequest::Nodes => {
             let st = state.lock().await;
+            let local_node_id = st.membership.node_id().to_string();
             let nodes = st
                 .membership
                 .members()
@@ -106,6 +107,17 @@ async fn dispatch_request(
                 .map(|n| {
                     let node_id_clone = n.node_id.clone();
                     let addr_ip = n.addr.ip().to_string();
+                    let is_local = n.node_id == local_node_id;
+                    let (phi, last_seen_at) = if is_local {
+                        (None, None)
+                    } else if let Some(peer) = st.peers.get(&n.node_id) {
+                        (
+                            Some(peer.phi_detector.phi()),
+                            peer.phi_detector.last_heartbeat_epoch(),
+                        )
+                    } else {
+                        (None, None)
+                    };
                     NodeInfoResponse {
                         node_id: n.node_id,
                         addr: n.addr.to_string(),
@@ -122,6 +134,9 @@ async fn dispatch_request(
                                 metadata: s.metadata,
                             })
                             .collect(),
+                        phi,
+                        last_seen_at,
+                        is_local,
                     }
                 })
                 .collect();

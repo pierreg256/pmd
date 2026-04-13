@@ -139,6 +139,14 @@ pub struct NodeInfoResponse {
     pub metadata: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub services: Vec<ServiceEntry>,
+    /// Current φ (phi) suspicion level for this peer. `None` for the local node.
+    pub phi: Option<f64>,
+    /// Wall-clock epoch seconds when the last heartbeat ack was received.
+    /// `None` for the local node or if no heartbeat has been received yet.
+    pub last_seen_at: Option<u64>,
+    /// Whether this node is the local daemon node.
+    #[serde(default)]
+    pub is_local: bool,
 }
 
 /// A registered service entry.
@@ -507,6 +515,9 @@ mod tests {
                     joined_at: 123456,
                     metadata: std::collections::HashMap::new(),
                     services: vec![],
+                    phi: Some(1.23),
+                    last_seen_at: Some(123400),
+                    is_local: false,
                 }],
             },
             ControlResponse::Services {

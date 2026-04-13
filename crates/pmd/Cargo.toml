@@ -7,14 +7,15 @@ description = "Distributed node membership daemon inspired by Erlang EPMD — CR
 repository.workspace = true
 keywords = ["distributed", "membership", "crdt", "epmd", "daemon"]
 categories = ["network-programming", "command-line-utilities"]
+readme = "README.md"
 
 [[bin]]
 name = "pmd"
 path = "src/main.rs"
 
 [dependencies]
-portmapd-discovery = { version = "0.2.1", path = "../pmd-discovery" }
-portmapd-broadcast = { version = "0.2.1", path = "../pmd-broadcast" }
+portmapd-discovery = { version = "0.3.0", path = "../pmd-discovery" }
+portmapd-broadcast = { version = "0.3.0", path = "../pmd-broadcast" }
 
 concordat = "0.1"
 

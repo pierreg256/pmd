@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Phi Accrual Failure Detector (Hayashibara et al., 2004).
 ///
@@ -19,6 +19,8 @@ pub struct PhiAccrualDetector {
     max_window_size: usize,
     /// Timestamp of the last heartbeat received.
     last_heartbeat: Option<Instant>,
+    /// Wall-clock epoch seconds of the last heartbeat (for display purposes).
+    last_heartbeat_epoch: Option<u64>,
     /// Minimum standard deviation (ms) to prevent division-by-zero when
     /// inter-arrival times are perfectly uniform.
     min_std_deviation_ms: f64,
@@ -34,6 +36,7 @@ impl PhiAccrualDetector {
             intervals: VecDeque::with_capacity(max_window_size),
             max_window_size,
             last_heartbeat: None,
+            last_heartbeat_epoch: None,
             min_std_deviation_ms,
         }
     }
@@ -41,6 +44,10 @@ impl PhiAccrualDetector {
     /// Record a heartbeat arrival. Should be called each time a `HeartbeatAck`
     /// is received from the peer.
     pub fn heartbeat(&mut self) {
+        self.last_heartbeat_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs());
         self.heartbeat_at(Instant::now());
     }
 
@@ -87,6 +94,11 @@ impl PhiAccrualDetector {
         // the distribution, the higher φ.
         let one_minus_p = (1.0 - p).max(1e-100); // avoid log10(0)
         -one_minus_p.log10()
+    }
+
+    /// Wall-clock epoch seconds of the last heartbeat, if any.
+    pub fn last_heartbeat_epoch(&self) -> Option<u64> {
+        self.last_heartbeat_epoch
     }
 
     /// Check whether the peer should be considered unreachable.

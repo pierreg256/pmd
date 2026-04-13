@@ -169,10 +169,17 @@ where
     )
     .await;
 
-    // 6. Cleanup
+    // 6. Cleanup: remove peer handle and node from CRDT
     {
         let mut st = state.lock().await;
         st.peers.remove(&remote_node_id);
+        st.membership.remove_node(&remote_node_id);
+        let change = crate::daemon::membership::MembershipChange {
+            event: crate::protocol::MembershipEvent::NodeLeft,
+            node_id: remote_node_id.clone(),
+            addr: remote_addr.to_string(),
+        };
+        crate::daemon::broadcast_events(&st, &[change]);
     }
     info!(node_id = %remote_node_id, "inbound peer disconnected");
 
@@ -302,10 +309,17 @@ pub async fn connect_to_peer(
     )
     .await;
 
-    // 6. Cleanup
+    // 6. Cleanup: remove peer handle and node from CRDT
     {
         let mut st = state.lock().await;
         st.peers.remove(&remote_node_id);
+        st.membership.remove_node(&remote_node_id);
+        let change = crate::daemon::membership::MembershipChange {
+            event: crate::protocol::MembershipEvent::NodeLeft,
+            node_id: remote_node_id.clone(),
+            addr: remote_addr.to_string(),
+        };
+        crate::daemon::broadcast_events(&st, &[change]);
     }
     info!(node_id = %remote_node_id, "outbound peer disconnected");
 

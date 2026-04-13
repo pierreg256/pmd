@@ -131,7 +131,7 @@ See [`pmd-broadcast`](crates/pmd-broadcast/) for a complete example.
 # Build
 cargo build --workspace
 
-# Test (43 unit tests)
+# Test (62 unit tests)
 cargo test --workspace
 
 # Lint
